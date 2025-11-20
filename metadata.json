@@ -1,0 +1,5 @@
+{
+  "name": "Tiles – Recipe & Nutrition Manager",
+  "description": "A modular recipe and nutrition management application integrated with USDA FoodData Central for accurate nutrient tracking.",
+  "requestFramePermissions": []
+}
