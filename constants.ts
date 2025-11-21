@@ -43,4 +43,4 @@ export const NUTRIENT_DISPLAY_NAMES: Record<number, string> = {
 
 // Request defaults
 export const DEFAULT_PAGE_SIZE = 20;
-export const DEFAULT_DATA_TYPES = ['Foundation', 'SR Legacy']; // Prioritize high-quality data over Branded
+export const DEFAULT_DATA_TYPES = ['Foundation', 'SR Legacy'];

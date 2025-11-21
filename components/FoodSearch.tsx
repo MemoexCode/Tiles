@@ -148,9 +148,6 @@ export const FoodSearch: React.FC = () => {
               <h3 className="font-bold text-gray-900 text-lg leading-tight mb-1 group-hover:text-emerald-600 transition-colors">
                 {food.description}
               </h3>
-              {food.brandOwner && (
-                <p className="text-sm text-gray-500 mb-4">{food.brandOwner}</p>
-              )}
 
               <div className="grid grid-cols-3 gap-2 mt-6">
                 {/* Quick Stats */}

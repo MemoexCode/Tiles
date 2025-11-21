@@ -5,8 +5,6 @@ import React from 'react';
 export enum DataType {
   Foundation = 'Foundation',
   SRLegacy = 'SR Legacy',
-  Branded = 'Branded',
-  Survey = 'Survey (FNDDS)',
 }
 
 // Refined based on OpenAPI Spec provided
@@ -28,23 +26,22 @@ export interface AbridgedFoodNutrient {
   value: number;
 }
 
-// 3. Full Food Nutrient (Used in Detail Views for Foundation/Legacy/Branded with format=full)
+// 3. Full Food Nutrient (Used in Detail Views for Foundation/Legacy with format=full)
 export interface FoodNutrient {
   id: number; // This is the ID of the relation/record, NOT the nutrient ID
   type?: string; 
-  amount?: number; // This is the standard field for quantity in Full format
+  amount?: number; // Standard field for quantity in Full format (Foundation)
   
   // Foundation Foods use this nested object for nutrient details
   nutrient?: BaseNutrient; 
 
-  // Some legacy or branded responses might still flatten these, 
-  // but with format=full we expect the 'nutrient' object for Foundation.
-  // We keep these optional for backward compatibility/Branded items.
+  // SR Legacy often uses flat fields.
+  // We keep these to preserve the existing extraction logic in normalizer/components.
   nutrientId?: number; 
   nutrientName?: string;
   nutrientNumber?: string;
   unitName?: string;
-  value?: number; // Sometimes used in Branded instead of amount
+  value?: number; // Used in SR Legacy instead of amount
 }
 
 export interface FoodPortion {
@@ -66,15 +63,12 @@ export interface FDCFoodItem {
   description: string;
   dataType: string;
   publicationDate: string;
-  foodCode?: string;
   
   // The API returns different structures based on 'format' parameter.
   // We request 'full', so we get FoodNutrient[]
   foodNutrients: FoodNutrient[]; 
   
   foodPortions?: FoodPortion[];
-  brandOwner?: string;
-  ingredients?: string;
   score?: number;
   ndbNumber?: number;
   scientificName?: string;
@@ -86,7 +80,6 @@ export interface SearchResultFood {
   description: string;
   dataType: string;
   publishedDate: string;
-  brandOwner?: string;
   score: number;
   // Search results return the 'AbridgedFoodNutrient' structure
   foodNutrients: AbridgedFoodNutrient[];

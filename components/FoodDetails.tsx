@@ -111,9 +111,6 @@ export const FoodDetails: React.FC = () => {
               </span>
             </div>
             <h1 className="text-2xl md:text-3xl font-bold text-gray-900">{food.description}</h1>
-            {food.brandOwner && (
-              <p className="text-gray-500 mt-1">Brand: {food.brandOwner}</p>
-            )}
           </div>
         </div>
 
@@ -134,14 +131,6 @@ export const FoodDetails: React.FC = () => {
                 This grouping prevents duplicate image generation for similar food items.
               </p>
             </div>
-          </div>
-        )}
-
-        {/* Ingredients List (if available) */}
-        {food.ingredients && (
-          <div className="mt-6 p-4 bg-gray-50 rounded-xl text-sm text-gray-600 leading-relaxed border border-gray-100">
-            <span className="font-semibold text-gray-900 block mb-1">Ingredients:</span>
-            {food.ingredients}
           </div>
         )}
       </div>
