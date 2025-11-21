@@ -1,5 +1,5 @@
 
-import { DEFAULT_PAGE_SIZE, DEFAULT_DATA_TYPES, TARGET_NUTRIENT_LIST } from '../constants';
+import { DEFAULT_PAGE_SIZE, DEFAULT_DATA_TYPES, API_REQUEST_NUTRIENT_NUMBERS } from '../constants';
 import { FDCSearchResponse, FDCFoodItem, USDAFoodRaw } from '../types';
 import { supabase } from './supabase';
 import { normalizeFoodItem } from './normalizer';
@@ -98,7 +98,9 @@ class USDAService {
         body: {
           action: 'details',
           fdcId: fdcId,
-          nutrients: TARGET_NUTRIENT_LIST // PERFORMANCE: Fetch only relevant nutrients
+          // CRITICAL FIX: Use Nutrient Numbers (e.g., 208), not Nutrient IDs (e.g., 1008)
+          // The USDA API filter parameter expects legacy numbers.
+          nutrients: API_REQUEST_NUTRIENT_NUMBERS 
         }
       });
       const endNetwork = performance.now();

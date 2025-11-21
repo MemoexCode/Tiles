@@ -21,8 +21,25 @@ export const NUTRIENT_IDS = {
   FATTY_ACIDS_SATURATED: 1258,
 };
 
-// List of Nutrients to target in API calls for performance optimization
-export const TARGET_NUTRIENT_LIST = Object.values(NUTRIENT_IDS);
+// Key Nutrient Numbers (API Request Filter)
+// The USDA API 'nutrients' parameter specifically requires these legacy "Nutrient Numbers",
+// NOT the "Nutrient IDs" defined above. Using IDs results in empty responses.
+export const API_REQUEST_NUTRIENT_NUMBERS = [
+  208, // Energy (KCAL) - Corresponds to ID 1008
+  957, // Energy (Atwater General) - Corresponds to ID 2047
+  958, // Energy (Atwater Specific) - Corresponds to ID 2048
+  203, // Protein - Corresponds to ID 1003
+  204, // Total Lipid (Fat) - Corresponds to ID 1004
+  205, // Carbohydrate - Corresponds to ID 1005
+  291, // Fiber, total dietary - Corresponds to ID 1079
+  269, // Sugars, total - Corresponds to ID 2000
+  301, // Calcium - Corresponds to ID 1087
+  303, // Iron - Corresponds to ID 1089
+  307, // Sodium - Corresponds to ID 1093
+  401, // Vitamin C - Corresponds to ID 1162
+  601, // Cholesterol - Corresponds to ID 1253
+  606  // Fatty Acids, Saturated - Corresponds to ID 1258
+];
 
 // Display names for the UI. 
 // NOTE: We ONLY map the primary ID 1008 to 'Calories'. 
