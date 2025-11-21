@@ -1,6 +1,5 @@
-
 import React, { useState, useEffect } from 'react';
-import { Search, Loader2, Info, Database, ChevronRight } from 'lucide-react';
+import { Search, Loader2, Info, Database, ChevronRight, Calculator, FlaskConical } from 'lucide-react';
 import { usdaService } from '../services/usdaService';
 import { SearchResultFood, DataType } from '../types';
 import { NUTRIENT_IDS } from '../constants';
@@ -70,11 +69,25 @@ export const FoodSearch: React.FC = () => {
   // Helper to render the value or a dash if absolutely nothing found
   const renderCalorieValue = (food: SearchResultFood) => {
     // Priorität: 1008 (Standard) -> 2048 (Specific) -> 2047 (General)
-    const val = getNutrientValue(food, NUTRIENT_IDS.ENERGY_KCAL) 
-             ?? getNutrientValue(food, NUTRIENT_IDS.ENERGY_ATWATER_SPECIFIC) 
-             ?? getNutrientValue(food, NUTRIENT_IDS.ENERGY_ATWATER_GENERAL);
+    
+    const valStandard = getNutrientValue(food, NUTRIENT_IDS.ENERGY_KCAL);
+    if (valStandard !== null) return <span>{valStandard}</span>;
+
+    const valSpecific = getNutrientValue(food, NUTRIENT_IDS.ENERGY_ATWATER_SPECIFIC);
+    if (valSpecific !== null) return (
+      <span className="flex items-center justify-center text-purple-700 font-bold">
+        {valSpecific} <FlaskConical className="w-3 h-3 ml-1 fill-purple-100 text-purple-500" />
+      </span>
+    );
+
+    const valGeneral = getNutrientValue(food, NUTRIENT_IDS.ENERGY_ATWATER_GENERAL);
+    if (valGeneral !== null) return (
+      <span className="flex items-center justify-center text-gray-500">
+        {valGeneral} <Calculator className="w-3 h-3 ml-1 text-gray-400" />
+      </span>
+    );
              
-    return val !== null ? val : '-';
+    return '-';
   };
 
   const renderValueOrDash = (val: number | null) => {

@@ -1,7 +1,6 @@
-
 import React, { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { ArrowLeft, Database, Loader2, Tag, Scale, Info, BrainCircuit, ScanEye } from 'lucide-react';
+import { ArrowLeft, Database, Loader2, Tag, Scale, Info, BrainCircuit, ScanEye, Calculator, FlaskConical } from 'lucide-react';
 import { usdaService } from '../services/usdaService';
 import { normalizeFoodItem, NormalizedFood } from '../services/normalizer';
 import { FDCFoodItem } from '../types';
@@ -166,9 +165,15 @@ export const FoodDetails: React.FC = () => {
           <div className="space-y-0 divide-y divide-gray-100">
             {food.foodNutrients
               .map(n => extractNutrient(n)) // 1. Extract info using shared utility
-              .filter(info => info.val > 0 && info.id) // 2. Filter empty/invalid
+              .filter(info => info.val >= 0 && info.id) // 2. Filter invalid (0 is valid now!)
               .sort((a, b) => {
-                  // 3. Sort: Known/Important nutrients first
+                  // 3. Sort Priority: Energy First, then Known Nutrients
+                  const isEnergyA = [NUTRIENT_IDS.ENERGY_KCAL, NUTRIENT_IDS.ENERGY_ATWATER_SPECIFIC, NUTRIENT_IDS.ENERGY_ATWATER_GENERAL].includes(a.id!);
+                  const isEnergyB = [NUTRIENT_IDS.ENERGY_KCAL, NUTRIENT_IDS.ENERGY_ATWATER_SPECIFIC, NUTRIENT_IDS.ENERGY_ATWATER_GENERAL].includes(b.id!);
+                  
+                  if (isEnergyA && !isEnergyB) return -1;
+                  if (!isEnergyA && isEnergyB) return 1;
+
                   const aKnown = NUTRIENT_DISPLAY_NAMES[a.id!] ? 1 : 0;
                   const bKnown = NUTRIENT_DISPLAY_NAMES[b.id!] ? 1 : 0;
                   return bKnown - aKnown;
@@ -178,8 +183,26 @@ export const FoodDetails: React.FC = () => {
                 let displayName = (info.id && NUTRIENT_DISPLAY_NAMES[info.id]) || info.name;
                 const isHighlight = info.id && !!NUTRIENT_DISPLAY_NAMES[info.id];
                 
+                // Determine Energy Style
+                let icon = null;
+                let rowClass = isHighlight ? 'font-medium text-gray-900' : 'text-gray-600 text-sm';
+                let valClass = 'font-mono text-gray-700';
+
+                if (info.id === NUTRIENT_IDS.ENERGY_ATWATER_GENERAL) {
+                   displayName = "Energy (Atwater General)";
+                   icon = <Calculator className="w-4 h-4 text-gray-400 mr-2" />;
+                   rowClass = "text-gray-500 text-sm font-normal";
+                } else if (info.id === NUTRIENT_IDS.ENERGY_ATWATER_SPECIFIC) {
+                   displayName = "Energy (Atwater Specific)";
+                   icon = <FlaskConical className="w-4 h-4 text-purple-500 mr-2 fill-purple-100" />;
+                   rowClass = "text-purple-700 font-medium";
+                   valClass = "font-mono text-purple-700 font-bold";
+                } else if (info.id === NUTRIENT_IDS.ENERGY_KCAL) {
+                   // Standard 1008
+                   rowClass = "font-bold text-gray-900";
+                }
+
                 // STRICT FILTER LOGIC:
-                
                 // Scenario 1: Standard Energy (1008) exists.
                 // -> Hide Atwater General (2047) and Specific (2048) to prevent duplicates.
                 if (hasStandardEnergy) {
@@ -198,11 +221,12 @@ export const FoodDetails: React.FC = () => {
 
                 return (
                   <div key={`${info.id}-${index}`} className="flex justify-between items-center py-3 hover:bg-gray-50 px-2 -mx-2 rounded transition-colors">
-                    <span className={`${isHighlight ? 'font-medium text-gray-900' : 'text-gray-600 text-sm'}`}>
+                    <span className={`flex items-center ${rowClass}`}>
+                      {icon}
                       {displayName}
                     </span>
-                    <span className="font-mono text-gray-700">
-                      {info.val} <span className="text-gray-400 text-xs">{info.unit?.toLowerCase() || ''}</span>
+                    <span className={valClass}>
+                      {info.val} <span className="text-gray-400 text-xs font-normal">{info.unit?.toLowerCase() || ''}</span>
                     </span>
                   </div>
                 );
