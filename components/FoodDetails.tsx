@@ -3,8 +3,9 @@ import { useParams, Link } from 'react-router-dom';
 import { ArrowLeft, Database, Loader2, Tag, Scale, Info, BrainCircuit, ScanEye } from 'lucide-react';
 import { usdaService } from '../services/usdaService';
 import { normalizeFoodItem, NormalizedFood } from '../services/normalizer';
-import { FDCFoodItem, FoodNutrient } from '../types';
+import { FDCFoodItem } from '../types';
 import { NUTRIENT_DISPLAY_NAMES, NUTRIENT_IDS } from '../constants';
+import { extractNutrient } from '../services/nutrientUtils';
 
 export const FoodDetails: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -36,23 +37,6 @@ export const FoodDetails: React.FC = () => {
 
     fetchDetails();
   }, [id]);
-
-  // Helper to safely extract displayable data from inconsistent USDA structures
-  const getNutrientDisplayInfo = (n: FoodNutrient) => {
-    // ID: Prioritize nested nutrient.id (Foundation), fallback to nutrientId (SR Legacy/Search)
-    const id = n.nutrient?.id || n.nutrientId;
-    
-    // Name: Prioritize nested nutrient.name, fallback to flat nutrientName
-    let name = n.nutrient?.name || n.nutrientName || 'Unknown Nutrient';
-    
-    // Unit: Prioritize nested unitName, fallback to flat unitName
-    const unit = n.nutrient?.unitName || n.unitName || '';
-    
-    // Value: 'amount' is standard for details, 'value' for search results
-    const val = typeof n.amount === 'number' ? n.amount : (n.value || 0);
-
-    return { id, name, unit, val };
-  };
 
   if (loading) {
     return (
@@ -147,7 +131,7 @@ export const FoodDetails: React.FC = () => {
           
           <div className="space-y-0 divide-y divide-gray-100">
             {food.foodNutrients
-              .map(n => getNutrientDisplayInfo(n)) // 1. Extract info
+              .map(n => extractNutrient(n)) // 1. Extract info using shared utility
               .filter(info => info.val > 0 && info.id) // 2. Filter empty/invalid
               .sort((a, b) => {
                   // 3. Sort: Known/Important nutrients first
