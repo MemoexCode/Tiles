@@ -1,5 +1,5 @@
 
-import { DEFAULT_PAGE_SIZE, DEFAULT_DATA_TYPES } from '../constants';
+import { DEFAULT_PAGE_SIZE, DEFAULT_DATA_TYPES, TARGET_NUTRIENT_LIST } from '../constants';
 import { FDCSearchResponse, FDCFoodItem, USDAFoodRaw } from '../types';
 import { supabase } from './supabase';
 import { normalizeFoodItem } from './normalizer';
@@ -64,6 +64,10 @@ class USDAService {
    * 3. If Miss or Expired -> Call Edge Function -> Save to DB -> Return
    */
   async getFoodDetails(fdcId: number): Promise<FDCFoodItem> {
+    const startTotal = performance.now();
+    let networkTime = 0;
+    let source = 'Cache';
+
     // 1. Check Cache
     try {
       const { data: cachedData, error } = await supabase
@@ -75,7 +79,9 @@ class USDAService {
       if (cachedData && !error) {
         const entry = cachedData as USDAFoodRaw;
         if (this.isCacheValid(entry.fetched_at)) {
-          console.log(`[Cache Hit] Serving ${fdcId} from Supabase DB`);
+          // CACHE HIT
+          const endTotal = performance.now();
+          this.logPerformance(fdcId, 'Cache', 0, endTotal - startTotal, entry.raw_json.foodNutrients?.length || 0);
           return entry.raw_json;
         } else {
           console.log(`[Cache Expired] Refreshing ${fdcId} via Proxy`);
@@ -87,12 +93,17 @@ class USDAService {
 
     // 2. Fetch via Proxy (Edge Function)
     try {
+      const startNetwork = performance.now();
       const { data, error } = await supabase.functions.invoke('usda-proxy', {
         body: {
           action: 'details',
-          fdcId: fdcId
+          fdcId: fdcId,
+          nutrients: TARGET_NUTRIENT_LIST // PERFORMANCE: Fetch only relevant nutrients
         }
       });
+      const endNetwork = performance.now();
+      networkTime = endNetwork - startNetwork;
+      source = 'Network';
 
       if (error) {
          throw new Error(error.message || 'Failed to invoke details proxy');
@@ -104,6 +115,9 @@ class USDAService {
       // We do this client-side here to ensure the specific 'usda_food_raw' table structure 
       // is respected without over-complicating the generic proxy.
       this.saveToCache(fdcId, foodData);
+
+      const endTotal = performance.now();
+      this.logPerformance(fdcId, source, networkTime, endTotal - startTotal, foodData.foodNutrients?.length || 0);
 
       return foodData;
     } catch (error) {
@@ -135,12 +149,24 @@ class USDAService {
 
       if (error) {
         console.error('Failed to cache food item in Supabase:', error.message);
-      } else {
-        console.log(`[Cache Write] Saved ${fdcId} (Parent: ${normalizedData.visual_parent}) to Supabase`);
       }
     } catch (err) {
       console.error('Critical error saving to cache:', err);
     }
+  }
+
+  /**
+   * Outputs structured performance logs to the developer console
+   */
+  private logPerformance(fdcId: number, source: string, netTime: number, totalTime: number, items: number) {
+    console.groupCollapsed(`[USDA Performance] Food ${fdcId}`);
+    console.log(`Source:        ${source}`);
+    console.log(`Total Time:    ${totalTime.toFixed(2)}ms`);
+    if (netTime > 0) {
+      console.log(`Network Latency: ${netTime.toFixed(2)}ms`);
+    }
+    console.log(`Payload Items: ${items}`);
+    console.groupEnd();
   }
 }
 

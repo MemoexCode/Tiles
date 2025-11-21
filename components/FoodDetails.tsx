@@ -1,3 +1,4 @@
+
 import React, { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { ArrowLeft, Database, Loader2, Tag, Scale, Info, BrainCircuit, ScanEye } from 'lucide-react';
@@ -13,14 +14,27 @@ export const FoodDetails: React.FC = () => {
   const [normalizedView, setNormalizedView] = useState<NormalizedFood | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  
+  // Developer Metrics State
+  const [metrics, setMetrics] = useState<{ fetchTime: number; payloadSize: number } | null>(null);
 
   useEffect(() => {
     const fetchDetails = async () => {
       if (!id) return;
       setLoading(true);
+      setMetrics(null);
+      
+      const startTime = performance.now();
       try {
         // Fetch Raw Data
         const data = await usdaService.getFoodDetails(parseInt(id));
+        const endTime = performance.now();
+        
+        setMetrics({
+          fetchTime: endTime - startTime,
+          payloadSize: data.foodNutrients?.length || 0
+        });
+
         setFood(data);
         
         // Calculate normalization locally for display (mimics backend logic)
@@ -74,11 +88,31 @@ export const FoodDetails: React.FC = () => {
 
   return (
     <div className="space-y-6 max-w-4xl mx-auto">
+      
       {/* Header Navigation */}
       <Link to="/ingredients" className="inline-flex items-center text-gray-500 hover:text-gray-900 transition-colors">
         <ArrowLeft className="w-4 h-4 mr-2" />
         Back to Search
       </Link>
+
+      {/* Developer Metrics Bar */}
+      {metrics && (
+        <div className="bg-gray-900 text-gray-300 rounded-lg p-2 flex items-center text-xs font-mono shadow-sm border border-gray-700">
+          <div className="bg-emerald-500 text-gray-900 font-bold px-2 py-0.5 rounded mr-3">
+            DEV MODE
+          </div>
+          <div className="flex space-x-4">
+            <span className="flex items-center">
+              <span className="mr-1.5">⏱️</span>
+              Fetch: <span className="text-white ml-1">{metrics.fetchTime.toFixed(1)}ms</span>
+            </span>
+            <span className="flex items-center">
+              <span className="mr-1.5">📦</span>
+              Payload: <span className="text-white ml-1">{metrics.payloadSize} items</span>
+            </span>
+          </div>
+        </div>
+      )}
 
       {/* Title Card */}
       <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6 md:p-8">

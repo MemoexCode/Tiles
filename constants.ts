@@ -21,6 +21,9 @@ export const NUTRIENT_IDS = {
   FATTY_ACIDS_SATURATED: 1258,
 };
 
+// List of Nutrients to target in API calls for performance optimization
+export const TARGET_NUTRIENT_LIST = Object.values(NUTRIENT_IDS);
+
 // Display names for the UI. 
 // NOTE: We ONLY map the primary ID 1008 to 'Calories'. 
 // 2047 and 2048 are intentionally removed to prevent duplicate "Calories" rows in the UI.
