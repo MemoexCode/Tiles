@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { Search, Loader2, Info, Database, ChevronRight, Calculator, FlaskConical } from 'lucide-react';
 import { usdaService } from '../services/usdaService';
@@ -40,14 +39,12 @@ export const FoodSearch: React.FC = () => {
 
     try {
       const response = await usdaService.searchFoods(query);
-      // Safeguard: Ensure we always have an array, even if API returns undefined/null
-      const searchResults = response?.foods || [];
-      setResults(searchResults);
+      setResults(response.foods);
       
       // 2. Save State (Gedächtnis speichern)
       sessionStorage.setItem(STORAGE_KEY_SEARCH, JSON.stringify({
         query,
-        results: searchResults,
+        results: response.foods,
         hasSearched: true
       }));
       
@@ -61,7 +58,6 @@ export const FoodSearch: React.FC = () => {
 
   // 3. Fix Nutrient Logic: Return number or null (not string '-') to allow chaining
   const getNutrientValue = (food: SearchResultFood, nutrientId: number): number | null => {
-    if (!food.foodNutrients) return null;
     const nutrient = food.foodNutrients.find(n => n.nutrientId === nutrientId);
     // Check for null/undefined explicitly because 0 is a valid number
     if (nutrient && (typeof nutrient.value === 'number')) {
@@ -145,7 +141,7 @@ export const FoodSearch: React.FC = () => {
 
       {/* Results Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {(results || []).map((food) => (
+        {results.map((food) => (
           <div 
             key={food.fdcId} 
             className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden hover:shadow-md transition-all group flex flex-col h-full"
@@ -204,7 +200,7 @@ export const FoodSearch: React.FC = () => {
       </div>
 
       {/* Empty State */}
-      {!isLoading && hasSearched && (!results || results.length === 0) && !error && (
+      {!isLoading && hasSearched && results.length === 0 && !error && (
         <div className="text-center py-20">
           <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
             <Search className="w-8 h-8 text-gray-400" />
