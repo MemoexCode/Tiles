@@ -1,3 +1,4 @@
+
 import { FDCFoodItem, FoodPortion, NormalizedFoodPortion, NormalizedFood } from '../types';
 import { NUTRIENT_IDS } from '../constants';
 

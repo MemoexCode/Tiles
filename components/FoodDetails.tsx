@@ -1,3 +1,4 @@
+
 import React, { useEffect, useState, useMemo } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { ArrowLeft, Tag, BarChart3, FlaskConical, Gauge, Calculator, Utensils, Zap, Database, AlertTriangle } from 'lucide-react';
@@ -181,12 +182,23 @@ export const FoodDetails: React.FC = () => {
         return [...food.foodNutrients]
             .filter(n => {
                 const val = typeof n.amount === 'number' ? n.amount : n.value;
+                // Keep nutrients even if value is 0
                 return val !== null && val !== undefined;
             })
             .map(n => ({
                 ...n,
                 ...getNutrientInfo(n.nutrient?.id || n.nutrientId || 0), // Merge with display names/units from constants
             }))
+            // FIX 1: Filter out Unknown nutrients
+            .filter(n => n.name && n.name !== 'Unknown')
+            // FIX 2: Explicitly filter out duplicate Energy entries in the list
+            .filter(n => {
+                const id = n.nutrient?.id || n.nutrientId;
+                // We display energy prominently in tiles, so remove it from the list
+                return id !== NUTRIENT_IDS.ENERGY_KCAL && 
+                       id !== NUTRIENT_IDS.ENERGY_ATWATER_GENERAL && 
+                       id !== NUTRIENT_IDS.ENERGY_ATWATER_SPECIFIC;
+            })
             .sort(sortNutrients);
     }, [food]);
 
@@ -337,29 +349,18 @@ export const FoodDetails: React.FC = () => {
                             {sortedNutrients.map((info, index) => {
                                 // 4. Display Logic
                                 const displayName = info.name;
+                                // Highlight known nutrients (defined in NUTRIENT_DISPLAY_NAMES)
                                 const isHighlight = info.id && !!NUTRIENT_DISPLAY_NAMES[info.id];
                                 const val = typeof info.amount === 'number' ? info.amount : info.value;
                                 const id = info.nutrient?.id || info.nutrientId;
                                 
-                                // Determine Energy Style
-                                let icon = null;
-                                let rowClass = isHighlight ? 'font-medium bg-emerald-50/50' : 'text-gray-600';
-
-                                if (id === NUTRIENT_IDS.ENERGY_ATWATER_SPECIFIC) {
-                                    icon = <FlaskConical className="w-3 h-3 ml-2 fill-purple-100 text-purple-500" />;
-                                    rowClass = 'font-bold bg-purple-50/50 text-purple-800';
-                                } else if (id === NUTRIENT_IDS.ENERGY_ATWATER_GENERAL) {
-                                    icon = <Calculator className="w-3 h-3 ml-2 fill-blue-100 text-blue-500" />;
-                                    rowClass = 'font-bold bg-blue-50/50 text-blue-800';
-                                } else if (id === NUTRIENT_IDS.ENERGY_KCAL) {
-                                    icon = <BarChart3 className="w-3 h-3 ml-2 fill-gray-100 text-gray-500" />;
-                                }
+                                // Determine Row Style
+                                let rowClass = isHighlight ? 'font-medium bg-emerald-50/30' : 'text-gray-600';
 
                                 return (
                                     <tr key={info.id || index} className={rowClass}>
                                         <td className="px-6 py-3 whitespace-nowrap text-sm flex items-center">
                                             {displayName}
-                                            {icon}
                                         </td>
                                         <td className="px-6 py-3 whitespace-nowrap text-sm text-right">
                                             <span className="font-mono text-gray-900">{renderValueOrDash(val)}</span>

@@ -1,3 +1,4 @@
+
 import React from 'react';
 
 // USDA FoodData Central Data Types based on Documentation

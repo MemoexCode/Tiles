@@ -1,4 +1,3 @@
-
 import { DEFAULT_PAGE_SIZE, DEFAULT_DATA_TYPES, API_REQUEST_NUTRIENT_NUMBERS } from '../constants';
 import { FDCSearchResponse, FDCFoodItem, USDAFoodRaw } from '../types';
 import { supabase } from './supabase';
@@ -21,7 +20,6 @@ class USDAService {
   /**
    * Search (Raw-Client via Proxy)
    * Calls the Supabase Edge Function 'usda-proxy'.
-   * The Edge Function handles the API Key injection securely.
    */
   async searchFoods(
     query: string, 
@@ -30,24 +28,27 @@ class USDAService {
   ): Promise<FDCSearchResponse> {
     
     try {
+      // Explicitly construct the body to ensure no extra parameters are sent
+      const requestBody = {
+        action: 'search',
+        query: query,
+        dataType: dataTypes,
+        pageSize: DEFAULT_PAGE_SIZE,
+        pageNumber: pageNumber,
+        sortBy: 'dataType.keyword',
+        sortOrder: 'asc'
+      };
+
       const { data, error } = await supabase.functions.invoke('usda-proxy', {
-        body: {
-          action: 'search',
-          query,
-          dataType: dataTypes,
-          pageSize: DEFAULT_PAGE_SIZE,
-          pageNumber,
-          sortBy: 'dataType.keyword',
-          sortOrder: 'asc'
-        }
+        body: requestBody
       });
 
       if (error) {
-        console.error('Supabase Function Error:', error);
+        // Try to extract helpful message from response context if available
+        console.error('Supabase Search Function Error:', error);
         throw new Error(error.message || 'Failed to invoke search proxy');
       }
 
-      // The proxy returns the exact JSON from USDA
       return data;
 
     } catch (error) {
@@ -58,10 +59,7 @@ class USDAService {
 
   /**
    * Detail Retrieval with Caching Strategy (Persistence Layer)
-   * Flow:
-   * 1. Check Cache (Supabase DB)
-   * 2. If Hit & Valid -> Return Cache
-   * 3. If Miss or Expired -> Call Edge Function -> Save to DB -> Return
+   * Features strict Retry Logic for 400 Bad Request errors.
    */
   async getFoodDetails(fdcId: number): Promise<FDCFoodItem> {
     const startTotal = performance.now();
@@ -88,42 +86,79 @@ class USDAService {
         }
       }
     } catch (err) {
-      console.warn('Cache lookup failed, falling back to API', err);
+      // Silent fail on cache read, proceed to API
+      console.warn('Cache lookup check failed/skipped', err);
     }
 
-    // 2. Fetch via Proxy (Edge Function)
+    // 2. Fetch via Proxy (Edge Function) with Retry Logic
     try {
       const startNetwork = performance.now();
-      const { data, error } = await supabase.functions.invoke('usda-proxy', {
-        body: {
-          action: 'details',
-          fdcId: fdcId,
-          // CRITICAL FIX: Use Nutrient Numbers (e.g., 208), not Nutrient IDs (e.g., 1008)
-          // The USDA API filter parameter expects legacy numbers.
-          nutrients: API_REQUEST_NUTRIENT_NUMBERS 
+      let data: FDCFoodItem | null = null;
+      let fetchError: any = null;
+
+      // --- ATTEMPT 1: Optimized Fetch (Specific Nutrients) ---
+      try {
+        const result = await supabase.functions.invoke('usda-proxy', {
+          body: {
+            action: 'details',
+            fdcId: fdcId,
+            // Optimization: Request only specific nutrients to reduce packet size
+            nutrients: API_REQUEST_NUTRIENT_NUMBERS 
+          }
+        });
+
+        if (result.error) throw result.error;
+        if (!result.data) throw new Error('Empty data returned');
+        
+        data = result.data;
+
+      } catch (firstError) {
+        console.warn(`[USDA] Filtered fetch failed for ID ${fdcId}. Reason:`, firstError);
+        console.warn(`[USDA] Initiating Fallback: Full Dataset Fetch...`);
+
+        // --- ATTEMPT 2: Fallback Fetch (Full Data) ---
+        // This handles cases where the API rejects the 'nutrients' filter (legacy items)
+        // or when a 400 Bad Request occurs due to parameter mismatches.
+        const retryResult = await supabase.functions.invoke('usda-proxy', {
+          body: {
+            action: 'details',
+            fdcId: fdcId
+            // NO nutrients parameter passed here -> Full Fetch
+          }
+        });
+
+        if (retryResult.error) {
+          fetchError = retryResult.error;
+        } else {
+          data = retryResult.data;
         }
-      });
+      }
+
       const endNetwork = performance.now();
       networkTime = endNetwork - startNetwork;
       source = 'Network';
 
-      if (error) {
-         throw new Error(error.message || 'Failed to invoke details proxy');
+      // Final Error Check
+      if (fetchError || !data) {
+         const msg = fetchError?.message || 'Failed to fetch food details after retry.';
+         console.error('[USDA] Critical Error:', fetchError);
+         throw new Error(msg);
       }
 
       const foodData: FDCFoodItem = data;
 
       // 3. Save to Cache (Persistence & Normalization)
-      // We do this client-side here to ensure the specific 'usda_food_raw' table structure 
-      // is respected without over-complicating the generic proxy.
-      this.saveToCache(fdcId, foodData);
+      // We perform this asynchronously to not block the UI
+      this.saveToCache(fdcId, foodData).catch(err => 
+        console.error('Background cache save failed:', err)
+      );
 
       const endTotal = performance.now();
       this.logPerformance(fdcId, source, networkTime, endTotal - startTotal, foodData.foodNutrients?.length || 0);
 
       return foodData;
     } catch (error) {
-      console.error(`Error fetching food ${fdcId}:`, error);
+      console.error(`Error processing food ${fdcId}:`, error);
       throw error;
     }
   }
@@ -150,6 +185,7 @@ class USDAService {
         }, { onConflict: 'fdc_id' });
 
       if (error) {
+        // This log helps debugging permission/RLS issues
         console.error('Failed to cache food item in Supabase:', error.message);
       }
     } catch (err) {

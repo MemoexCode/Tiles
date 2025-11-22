@@ -1,3 +1,4 @@
+
 // USDA API Configuration
 // Base URL is now handled by the Supabase Edge Function, but kept here for reference/types if needed.
 export const USDA_API_BASE_URL = 'https://api.nal.usda.gov/fdc/v1';
@@ -40,6 +41,20 @@ export const API_REQUEST_NUTRIENT_NUMBERS = [
   606  // Fatty Acids, Saturated - Corresponds to ID 1258
 ];
 
+// Preferred Sort Order for Nutrient Details Table
+export const NUTRIENT_ORDER = [
+  1008, // Energy
+  203,  // Protein
+  204,  // Fat
+  205,  // Carbs
+  291,  // Fiber
+  269,  // Sugars
+  307,  // Sodium
+  301,  // Calcium
+  401,  // Vit C
+  601   // Cholesterol
+];
+
 // Display names for the UI. 
 // NOTE: We ONLY map the primary ID 1008 to 'Calories'. 
 // 2047 and 2048 are intentionally removed to prevent duplicate "Calories" rows in the UI.
@@ -57,20 +72,6 @@ export const NUTRIENT_DISPLAY_NAMES: Record<number, string> = {
   1253: 'Cholesterol',
   1258: 'Saturated Fat'
 };
-
-// Preferred Sort Order for Nutrient Details Table
-export const NUTRIENT_ORDER = [
-  1008, // Energy
-  203,  // Protein
-  204,  // Fat
-  205,  // Carbs
-  291,  // Fiber
-  269,  // Sugars
-  307,  // Sodium
-  301,  // Calcium
-  401,  // Vit C
-  601   // Cholesterol
-];
 
 // Request defaults
 export const DEFAULT_PAGE_SIZE = 20;
