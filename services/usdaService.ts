@@ -44,7 +44,6 @@ class USDAService {
       });
 
       if (error) {
-        // Try to extract helpful message from response context if available
         console.error('Supabase Search Function Error:', error);
         throw new Error(error.message || 'Failed to invoke search proxy');
       }
@@ -90,15 +89,14 @@ class USDAService {
       console.warn('Cache lookup check failed/skipped', err);
     }
 
-    // 2. Fetch via Proxy (Edge Function) with Retry Logic
+    // 2. Fetch via Proxy (Edge Function) with Sequential Retry Logic
     try {
       const startNetwork = performance.now();
-      let data: FDCFoodItem | null = null;
-      let fetchError: any = null;
+      let foodData: FDCFoodItem | null = null;
 
       // --- ATTEMPT 1: Optimized Fetch (Specific Nutrients) ---
       try {
-        const result = await supabase.functions.invoke('usda-proxy', {
+        const { data, error } = await supabase.functions.invoke('usda-proxy', {
           body: {
             action: 'details',
             fdcId: fdcId,
@@ -107,30 +105,37 @@ class USDAService {
           }
         });
 
-        if (result.error) throw result.error;
-        if (!result.data) throw new Error('Empty data returned');
+        if (error) throw error;
+        if (!data) throw new Error('No data returned from optimized fetch');
         
-        data = result.data;
+        foodData = data;
 
       } catch (firstError) {
         console.warn(`[USDA] Filtered fetch failed for ID ${fdcId}. Reason:`, firstError);
         console.warn(`[USDA] Initiating Fallback: Full Dataset Fetch...`);
+        // We swallow the error here to allow flow to proceed to Attempt 2
+      }
 
-        // --- ATTEMPT 2: Fallback Fetch (Full Data) ---
-        // This handles cases where the API rejects the 'nutrients' filter (legacy items)
-        // or when a 400 Bad Request occurs due to parameter mismatches.
-        const retryResult = await supabase.functions.invoke('usda-proxy', {
-          body: {
-            action: 'details',
-            fdcId: fdcId
-            // NO nutrients parameter passed here -> Full Fetch
-          }
-        });
+      // --- ATTEMPT 2: Fallback Fetch (Full Data) ---
+      // Only executed if Attempt 1 failed (foodData is still null)
+      if (!foodData) {
+        try {
+          const { data, error } = await supabase.functions.invoke('usda-proxy', {
+            body: {
+              action: 'details',
+              fdcId: fdcId
+              // NO nutrients parameter passed here -> Full Fetch
+            }
+          });
 
-        if (retryResult.error) {
-          fetchError = retryResult.error;
-        } else {
-          data = retryResult.data;
+          if (error) throw error;
+          if (!data) throw new Error('Fallback fetch returned no data');
+          
+          foodData = data;
+
+        } catch (secondError) {
+          console.error(`[USDA] Critical: Both fetch attempts failed for ID ${fdcId}.`, secondError);
+          throw secondError; // Final failure, bubble up to UI
         }
       }
 
@@ -138,25 +143,21 @@ class USDAService {
       networkTime = endNetwork - startNetwork;
       source = 'Network';
 
-      // Final Error Check
-      if (fetchError || !data) {
-         const msg = fetchError?.message || 'Failed to fetch food details after retry.';
-         console.error('[USDA] Critical Error:', fetchError);
-         throw new Error(msg);
+      // 3. Save to Cache (Persistence & Normalization)
+      if (foodData) {
+        // We perform this asynchronously to not block the UI
+        this.saveToCache(fdcId, foodData).catch(err => 
+          console.error('Background cache save failed:', err)
+        );
+
+        const endTotal = performance.now();
+        this.logPerformance(fdcId, source, networkTime, endTotal - startTotal, foodData.foodNutrients?.length || 0);
+        
+        return foodData;
+      } else {
+        throw new Error('Unexpected state: No food data available after success path');
       }
 
-      const foodData: FDCFoodItem = data;
-
-      // 3. Save to Cache (Persistence & Normalization)
-      // We perform this asynchronously to not block the UI
-      this.saveToCache(fdcId, foodData).catch(err => 
-        console.error('Background cache save failed:', err)
-      );
-
-      const endTotal = performance.now();
-      this.logPerformance(fdcId, source, networkTime, endTotal - startTotal, foodData.foodNutrients?.length || 0);
-
-      return foodData;
     } catch (error) {
       console.error(`Error processing food ${fdcId}:`, error);
       throw error;

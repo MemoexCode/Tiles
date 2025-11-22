@@ -1,7 +1,6 @@
-
 import React, { useEffect, useState, useMemo } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { ArrowLeft, Tag, BarChart3, FlaskConical, Gauge, Calculator, Utensils, Zap, Database, AlertTriangle } from 'lucide-react';
+import { ArrowLeft, Tag, BarChart3, FlaskConical, Gauge, Calculator, Utensils, Zap, Database, AlertTriangle, ExternalLink, RefreshCw } from 'lucide-react';
 
 import { getNutrientValue, getNutrientInfo, renderValueOrDash } from '../services/nutrientUtils';
 import { usdaService } from '../services/usdaService';
@@ -136,44 +135,44 @@ export const FoodDetails: React.FC = () => {
         check();
     }, []);
 
-    useEffect(() => {
+    const fetchDetails = async () => {
         if (!fdcId) {
             setError('Keine FDC ID angegeben.');
             setLoading(false);
             return;
         }
 
-        const fetchDetails = async () => {
-            setLoading(true);
-            setError(null);
-            const start = performance.now();
+        setLoading(true);
+        setError(null);
+        const start = performance.now();
+        
+        try {
+            // 1. Fetch raw data from cache or API via the service
+            // We overwrite the logPerformance temporarily to capture metrics
+            const rawData = await usdaService.getFoodDetails(fdcId);
+            const end = performance.now();
             
-            try {
-                // 1. Fetch raw data from cache or API via the service
-                // We overwrite the logPerformance temporarily to capture metrics
-                const rawData = await usdaService.getFoodDetails(fdcId);
-                const end = performance.now();
-                
-                // Simple metric estimation (approximation as we can't easily hook into the service internals from here without refactoring service)
-                // In a real app, we would expose an observable or callback from the service.
-                setMetrics({
-                    totalTime: end - start,
-                    netTime: 0, // Cannot measure internal net time from here easily
-                    source: 'Service'
-                });
+            // Simple metric estimation
+            setMetrics({
+                totalTime: end - start,
+                netTime: 0, // Cannot measure internal net time from here easily
+                source: 'Service'
+            });
 
-                // 2. Normalize the raw data locally
-                const normalizedFood = normalizeFoodItem(rawData);
-                
-                setFood(normalizedFood);
-            } catch (err: any) {
-                console.error("Fehler beim Abrufen der Lebensmitteldetails:", err);
-                setError(`Fehler beim Laden der Details für ID ${fdcId}: ${err.message || 'Unbekannter Fehler'}`);
-            } finally {
-                setLoading(false);
-            }
-        };
+            // 2. Normalize the raw data locally
+            const normalizedFood = normalizeFoodItem(rawData);
+            
+            setFood(normalizedFood);
+        } catch (err: any) {
+            console.error("Fehler beim Abrufen der Lebensmitteldetails:", err);
+            // Use generic error state to trigger UI handling
+            setError(err.message || 'Failed to load food details');
+        } finally {
+            setLoading(false);
+        }
+    };
 
+    useEffect(() => {
         fetchDetails();
     }, [fdcId]);
 
@@ -182,7 +181,6 @@ export const FoodDetails: React.FC = () => {
         return [...food.foodNutrients]
             .filter(n => {
                 const val = typeof n.amount === 'number' ? n.amount : n.value;
-                // Keep nutrients even if value is 0
                 return val !== null && val !== undefined;
             })
             .map(n => ({
@@ -213,13 +211,40 @@ export const FoodDetails: React.FC = () => {
 
     if (error) {
         return (
-            <div className="p-8 text-center text-red-600">
-                <AlertTriangle className="w-8 h-8 mx-auto mb-3" />
-                <p className="font-bold">Ladefehler:</p>
-                <p className="text-sm">{error}</p>
-                <Link to="/ingredients" className="mt-4 inline-flex items-center text-emerald-600 hover:text-emerald-800 transition-colors text-sm">
-                    <ArrowLeft className="w-4 h-4 mr-2" /> Zurück zur Suche
-                </Link>
+            <div className="max-w-2xl mx-auto mt-10 bg-white rounded-2xl p-8 border border-red-100 shadow-lg text-center">
+                <div className="w-16 h-16 bg-red-50 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <AlertTriangle className="w-8 h-8 text-red-500" />
+                </div>
+                
+                <h2 className="text-xl font-bold text-gray-900 mb-2">Daten momentan nicht verfügbar</h2>
+                <p className="text-gray-600 mb-6">
+                    Die USDA-Datenbank konnte die Details für dieses Lebensmittel nicht liefern (API Error). 
+                    Möglicherweise wurde der Eintrag verschoben oder gelöscht.
+                </p>
+
+                <div className="flex flex-col sm:flex-row justify-center gap-4">
+                    <button 
+                        onClick={fetchDetails}
+                        className="inline-flex items-center justify-center px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors"
+                    >
+                        <RefreshCw className="w-4 h-4 mr-2" /> Erneut versuchen
+                    </button>
+                    
+                    <a 
+                        href={`https://fdc.nal.usda.gov/fdc-app.html#/food-details/${fdcId}/nutrients`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center justify-center px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+                    >
+                        <ExternalLink className="w-4 h-4 mr-2" /> Auf USDA ansehen
+                    </a>
+                </div>
+
+                <div className="mt-8 pt-6 border-t border-gray-100">
+                    <Link to="/ingredients" className="text-sm text-gray-500 hover:text-emerald-600 transition-colors">
+                        &larr; Zurück zur Suche
+                    </Link>
+                </div>
             </div>
         );
     }
@@ -349,18 +374,29 @@ export const FoodDetails: React.FC = () => {
                             {sortedNutrients.map((info, index) => {
                                 // 4. Display Logic
                                 const displayName = info.name;
-                                // Highlight known nutrients (defined in NUTRIENT_DISPLAY_NAMES)
                                 const isHighlight = info.id && !!NUTRIENT_DISPLAY_NAMES[info.id];
                                 const val = typeof info.amount === 'number' ? info.amount : info.value;
                                 const id = info.nutrient?.id || info.nutrientId;
                                 
-                                // Determine Row Style
-                                let rowClass = isHighlight ? 'font-medium bg-emerald-50/30' : 'text-gray-600';
+                                // Determine Energy Style
+                                let icon = null;
+                                let rowClass = isHighlight ? 'font-medium bg-emerald-50/50' : 'text-gray-600';
+
+                                if (id === NUTRIENT_IDS.ENERGY_ATWATER_SPECIFIC) {
+                                    icon = <FlaskConical className="w-3 h-3 ml-2 fill-purple-100 text-purple-500" />;
+                                    rowClass = 'font-bold bg-purple-50/50 text-purple-800';
+                                } else if (id === NUTRIENT_IDS.ENERGY_ATWATER_GENERAL) {
+                                    icon = <Calculator className="w-3 h-3 ml-2 fill-blue-100 text-blue-500" />;
+                                    rowClass = 'font-bold bg-blue-50/50 text-blue-800';
+                                } else if (id === NUTRIENT_IDS.ENERGY_KCAL) {
+                                    icon = <BarChart3 className="w-3 h-3 ml-2 fill-gray-100 text-gray-500" />;
+                                }
 
                                 return (
                                     <tr key={info.id || index} className={rowClass}>
                                         <td className="px-6 py-3 whitespace-nowrap text-sm flex items-center">
                                             {displayName}
+                                            {icon}
                                         </td>
                                         <td className="px-6 py-3 whitespace-nowrap text-sm text-right">
                                             <span className="font-mono text-gray-900">{renderValueOrDash(val)}</span>
