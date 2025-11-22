@@ -6,6 +6,7 @@ import { getNutrientValue, getNutrientInfo, renderValueOrDash } from '../service
 import { usdaService } from '../services/usdaService';
 import { NormalizedFood, NormalizedFoodNutrient, DatabaseStatus } from '../types';
 import { NUTRIENT_IDS, NUTRIENT_DISPLAY_NAMES, NUTRIENT_ORDER } from '../constants';
+import { normalizeFoodItem } from '../services/normalizer';
 
 // Helper for sorting based on the constants.ts order
 const sortNutrients = (a: NormalizedFoodNutrient, b: NormalizedFoodNutrient): number => {
@@ -120,7 +121,6 @@ export const FoodDetails: React.FC = () => {
     // Use state to store service metrics since we are not using a hook for the service anymore
     const [dbStatus, setDbStatus] = useState<DatabaseStatus>('loading');
     const [metrics, setMetrics] = useState<{ totalTime: number; netTime: number; source: string } | null>(null);
-    const [retryStatus, setRetryStatus] = useState("");
 
     const [food, setFood] = useState<NormalizedFood | null>(null);
     const [loading, setLoading] = useState(true);
@@ -144,27 +144,25 @@ export const FoodDetails: React.FC = () => {
 
         setLoading(true);
         setError(null);
-        setRetryStatus("");
+        const start = performance.now();
         
         try {
-            const start = performance.now();
-            
-            // Fetch already normalized data from service
-            const data = await usdaService.getFoodDetails(fdcId, (attempt) => {
-                setRetryStatus(`Retry ${attempt}/3…`);
-            });
-            
+            // 1. Fetch raw data from cache or API via the service
+            // We overwrite the logPerformance temporarily to capture metrics
+            const rawData = await usdaService.getFoodDetails(fdcId);
             const end = performance.now();
             
             // Simple metric estimation
             setMetrics({
                 totalTime: end - start,
-                netTime: 0, 
+                netTime: 0, // Cannot measure internal net time from here easily
                 source: 'Service'
             });
 
-            setFood(data);
-            setRetryStatus("");
+            // 2. Normalize the raw data locally
+            const normalizedFood = normalizeFoodItem(rawData);
+            
+            setFood(normalizedFood);
         } catch (err: any) {
             console.error("Fehler beim Abrufen der Lebensmitteldetails:", err);
             // Use generic error state to trigger UI handling
@@ -207,9 +205,6 @@ export const FoodDetails: React.FC = () => {
             <div className="p-8 text-center">
                 <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-emerald-500 mx-auto"></div>
                 <p className="mt-4 text-gray-600">Lade Lebensmitteldetails...</p>
-                {retryStatus && (
-                    <p className="text-xs text-gray-400 mt-2 animate-pulse">{retryStatus}</p>
-                )}
             </div>
         );
     }

@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import { Search, Loader2, Info, Database, ChevronRight, Calculator, FlaskConical } from 'lucide-react';
 import { usdaService } from '../services/usdaService';
@@ -13,8 +14,6 @@ export const FoodSearch: React.FC = () => {
   const [results, setResults] = useState<SearchResultFood[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [hasSearched, setHasSearched] = useState(false);
-  const [retryStatus, setRetryStatus] = useState("");
-
 
   // 1. Restore State on Mount (Gedächtnis wiederherstellen)
   useEffect(() => {
@@ -38,16 +37,12 @@ export const FoodSearch: React.FC = () => {
     setIsLoading(true);
     setError(null);
     setHasSearched(true);
-    setRetryStatus("");
 
     try {
-      const response = await usdaService.searchFoods(query, (attempt) => {
-        setRetryStatus(`Retry ${attempt}/3…`);
-      });
+      const response = await usdaService.searchFoods(query);
       // Safeguard: Ensure we always have an array, even if API returns undefined/null
       const searchResults = response?.foods || [];
       setResults(searchResults);
-      setRetryStatus("");
       
       // 2. Save State (Gedächtnis speichern)
       sessionStorage.setItem(STORAGE_KEY_SEARCH, JSON.stringify({
@@ -133,9 +128,6 @@ export const FoodSearch: React.FC = () => {
         </form>
         <div className="mt-3 flex items-center text-xs text-gray-400 space-x-4">
           <span className="flex items-center"><Database className="w-3 h-3 mr-1" /> Sources: Foundation, SR Legacy</span>
-          {retryStatus && (
-            <span className="text-orange-500 font-medium animate-pulse">{retryStatus}</span>
-          )}
         </div>
       </div>
 
