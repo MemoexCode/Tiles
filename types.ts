@@ -46,7 +46,7 @@ export interface FoodNutrient {
 
 export interface FoodPortion {
   id: number;
-  measureUnit: {
+  measureUnit?: {
     id: number;
     name: string;
     abbreviation: string;
@@ -82,6 +82,32 @@ export interface FDCFoodItem {
   score?: number;
   ndbNumber?: number;
   scientificName?: string;
+}
+
+// Normalized Object structure for the UI
+export interface NormalizedFood {
+  energy_kcal: number;
+  protein_g: number;
+  fat_g: number;
+  carbs_g: number;
+  sugar_g: number;
+  fiber_g: number;
+  sodium_mg: number;
+  visual_parent: string;
+  category: string;
+  category_code: string;
+  portions: NormalizedFoodPortion[];
+  fdcId: number;
+  description: string;
+  dataType: string;
+  publicationDate: string;
+  foodNutrients: FoodNutrient[]; // Kept for detailed list
+}
+
+// Type for sorting usage in components
+export interface NormalizedFoodNutrient extends FoodNutrient {
+  name?: string;
+  unitName?: string;
 }
 
 // Search Result Item (Abridged)
@@ -123,6 +149,8 @@ export interface USDAFoodRaw {
   visual_parent?: string | null; // Grouping for AI Image Generation (e.g. "Milk")
   normalized_json?: any | null; // Standardized Nutrient Object for Meal Planner
 }
+
+export type DatabaseStatus = 'checking' | 'connected' | 'error' | 'loading' | 'disconnected';
 
 // App Specific Types
 export interface NavItem {

@@ -1,19 +1,5 @@
-import { FDCFoodItem, FoodPortion, NormalizedFoodPortion } from '../types';
+import { FDCFoodItem, FoodPortion, NormalizedFoodPortion, NormalizedFood } from '../types';
 import { NUTRIENT_IDS } from '../constants';
-
-export interface NormalizedFood {
-  energy_kcal: number;
-  protein_g: number;
-  fat_g: number;
-  carbs_g: number;
-  sugar_g: number;
-  fiber_g: number;
-  sodium_mg: number;
-  visual_parent: string;
-  category: string;
-  category_code: string;
-  portions: NormalizedFoodPortion[];
-}
 
 /**
  * Hilfsfunktion, um einen Nährwert sicher zu finden.
@@ -88,6 +74,11 @@ const normalizeFoodPortion = (p: FoodPortion): NormalizedFoodPortion => {
  */
 export const normalizeFoodItem = (food: FDCFoodItem): NormalizedFood => {
   return {
+    fdcId: food.fdcId,
+    description: food.description,
+    dataType: food.dataType,
+    publicationDate: food.publicationDate,
+    
     // PRIORITÄT: 
     // 1. Standard Kalorien (1008)
     // 2. Atwater Specific (2048) -> Genauer als General!
@@ -108,6 +99,9 @@ export const normalizeFoodItem = (food: FDCFoodItem): NormalizedFood => {
     category_code: food.foodCategory?.code || '',
     
     // Portion Mapping
-    portions: (food.foodPortions || []).map(normalizeFoodPortion)
+    portions: (food.foodPortions || []).map(normalizeFoodPortion),
+    
+    // Pass through list for detailed view
+    foodNutrients: food.foodNutrients || []
   };
 };

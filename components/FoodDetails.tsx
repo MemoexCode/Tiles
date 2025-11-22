@@ -3,15 +3,18 @@ import { useParams, Link } from 'react-router-dom';
 import { ArrowLeft, Tag, BarChart3, FlaskConical, Gauge, Calculator, Utensils, Zap, Database, AlertTriangle } from 'lucide-react';
 
 import { getNutrientValue, getNutrientInfo, renderValueOrDash } from '../services/nutrientUtils';
-import { useUsdaService } from '../services/usdaService';
-import { NormalizedFood, NormalizedFoodNutrient, DatabaseStatus, USDAFoodRaw } from '../types';
+import { usdaService } from '../services/usdaService';
+import { NormalizedFood, NormalizedFoodNutrient, DatabaseStatus } from '../types';
 import { NUTRIENT_IDS, NUTRIENT_DISPLAY_NAMES, NUTRIENT_ORDER } from '../constants';
 import { normalizeFoodItem } from '../services/normalizer';
 
 // Helper for sorting based on the constants.ts order
 const sortNutrients = (a: NormalizedFoodNutrient, b: NormalizedFoodNutrient): number => {
-    const orderA = NUTRIENT_ORDER.indexOf(a.id!);
-    const orderB = NUTRIENT_ORDER.indexOf(b.id!);
+    const idA = a.nutrient?.id || a.nutrientId || 0;
+    const idB = b.nutrient?.id || b.nutrientId || 0;
+
+    const orderA = NUTRIENT_ORDER.indexOf(idA);
+    const orderB = NUTRIENT_ORDER.indexOf(idB);
 
     // If both are recognized (have an order), sort by that order
     if (orderA !== -1 && orderB !== -1) {
@@ -27,14 +30,14 @@ const sortNutrients = (a: NormalizedFoodNutrient, b: NormalizedFoodNutrient): nu
     }
 
     // Default: Sort recognized nutrients (for display) above unknown ones
-    const isEnergyA = a.id === NUTRIENT_IDS.ENERGY_KCAL || a.id === NUTRIENT_IDS.ENERGY_ATWATER_GENERAL || a.id === NUTRIENT_IDS.ENERGY_ATWATER_SPECIFIC;
-    const isEnergyB = b.id === NUTRIENT_IDS.ENERGY_KCAL || b.id === NUTRIENT_IDS.ENERGY_ATWATER_GENERAL || b.id === NUTRIENT_IDS.ENERGY_ATWATER_SPECIFIC;
+    const isEnergyA = idA === NUTRIENT_IDS.ENERGY_KCAL || idA === NUTRIENT_IDS.ENERGY_ATWATER_GENERAL || idA === NUTRIENT_IDS.ENERGY_ATWATER_SPECIFIC;
+    const isEnergyB = idB === NUTRIENT_IDS.ENERGY_KCAL || idB === NUTRIENT_IDS.ENERGY_ATWATER_GENERAL || idB === NUTRIENT_IDS.ENERGY_ATWATER_SPECIFIC;
 
     if (isEnergyA && !isEnergyB) return -1;
     if (!isEnergyA && isEnergyB) return 1;
 
-    const aKnown = NUTRIENT_DISPLAY_NAMES[a.id!] ? 1 : 0;
-    const bKnown = NUTRIENT_DISPLAY_NAMES[b.id!] ? 1 : 0;
+    const aKnown = NUTRIENT_DISPLAY_NAMES[idA] ? 1 : 0;
+    const bKnown = NUTRIENT_DISPLAY_NAMES[idB] ? 1 : 0;
 
     return bKnown - aKnown;
 };
@@ -111,14 +114,26 @@ const renderDbStatus = (dbStatus: DatabaseStatus) => {
 
 // --- Main Component ---
 
-const FoodDetails: React.FC = () => {
+export const FoodDetails: React.FC = () => {
     const { id } = useParams<{ id: string }>();
     const fdcId = Number(id);
-    const { getFoodDetails, checkDbConnection, dbStatus, metrics, isMetricsVisible } = useUsdaService();
+    
+    // Use state to store service metrics since we are not using a hook for the service anymore
+    const [dbStatus, setDbStatus] = useState<DatabaseStatus>('loading');
+    const [metrics, setMetrics] = useState<{ totalTime: number; netTime: number; source: string } | null>(null);
 
     const [food, setFood] = useState<NormalizedFood | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+
+    // Check DB connection on mount
+    useEffect(() => {
+        const check = async () => {
+            const res = await import('../services/supabase').then(m => m.checkConnection());
+            setDbStatus(res.success ? 'connected' : 'error');
+        };
+        check();
+    }, []);
 
     useEffect(() => {
         if (!fdcId) {
@@ -130,10 +145,21 @@ const FoodDetails: React.FC = () => {
         const fetchDetails = async () => {
             setLoading(true);
             setError(null);
+            const start = performance.now();
             
             try {
                 // 1. Fetch raw data from cache or API via the service
-                const rawData = await getFoodDetails(fdcId);
+                // We overwrite the logPerformance temporarily to capture metrics
+                const rawData = await usdaService.getFoodDetails(fdcId);
+                const end = performance.now();
+                
+                // Simple metric estimation (approximation as we can't easily hook into the service internals from here without refactoring service)
+                // In a real app, we would expose an observable or callback from the service.
+                setMetrics({
+                    totalTime: end - start,
+                    netTime: 0, // Cannot measure internal net time from here easily
+                    source: 'Service'
+                });
 
                 // 2. Normalize the raw data locally
                 const normalizedFood = normalizeFoodItem(rawData);
@@ -148,16 +174,18 @@ const FoodDetails: React.FC = () => {
         };
 
         fetchDetails();
-        checkDbConnection(); // Also check DB status
-    }, [fdcId, getFoodDetails, checkDbConnection]);
+    }, [fdcId]);
 
     const sortedNutrients = useMemo(() => {
         if (!food?.foodNutrients) return [];
         return [...food.foodNutrients]
-            .filter(n => n.value !== null && n.value !== undefined)
+            .filter(n => {
+                const val = typeof n.amount === 'number' ? n.amount : n.value;
+                return val !== null && val !== undefined;
+            })
             .map(n => ({
                 ...n,
-                ...getNutrientInfo(n.id || 0), // Merge with display names/units from constants
+                ...getNutrientInfo(n.nutrient?.id || n.nutrientId || 0), // Merge with display names/units from constants
             }))
             .sort(sortNutrients);
     }, [food]);
@@ -202,19 +230,13 @@ const FoodDetails: React.FC = () => {
             </Link>
 
             {/* Developer Metrics Bar */}
-            {isMetricsVisible && metrics && (
+            {metrics && (
                 <div className="bg-gray-900 text-gray-300 p-4 rounded-xl shadow-lg flex justify-between items-center text-sm">
                     <div className="flex items-center space-x-4">
                         <div className="flex items-center space-x-2">
                             <Gauge className="w-4 h-4 text-blue-400" />
                             <span>Total: **{metrics.totalTime.toFixed(2)}ms**</span>
                         </div>
-                        {metrics.netTime > 0 && (
-                            <div className="flex items-center space-x-2">
-                                <Zap className="w-4 h-4 text-yellow-400" />
-                                <span>Network: **{metrics.netTime.toFixed(2)}ms**</span>
-                            </div>
-                        )}
                         <div className="flex items-center space-x-2">
                             <Database className="w-4 h-4 text-emerald-400" />
                             <span>Source: **{metrics.source}**</span>
@@ -248,19 +270,15 @@ const FoodDetails: React.FC = () => {
             </div>
 
             {/* Portions Card */}
-            {food.foodPortions && food.foodPortions.length > 0 && (
+            {food.portions && food.portions.length > 0 && (
                 <div className="bg-white rounded-2xl p-6 border border-gray-200 shadow-sm">
                     <h3 className="font-bold text-gray-900 mb-3 flex items-center">
                         <Tag className="w-4 h-4 mr-2 text-gray-400" /> Portions
                     </h3>
                     <ul className="space-y-2">
-                        {food.foodPortions.map((portion) => (
+                        {food.portions.map((portion) => (
                             <li key={portion.id} className="text-sm text-gray-600 flex justify-between border-b border-gray-100 py-2 last:border-b-0">
-                                
-                                {/* -------------------- KORRIGIERTER ABSCHNITT START -------------------- */}
                                 <span>{portion.amount} <span className="font-semibold">{portion.unitDescription}</span></span>
-                                {/* -------------------- KORRIGIERTER ABSCHNITT END -------------------- */}
-                                
                                 <span className="text-gray-900 font-medium">{portion.gramWeight}g</span>
                             </li>
                         ))}
@@ -293,7 +311,7 @@ const FoodDetails: React.FC = () => {
                 <div className="bg-gray-50 rounded-lg p-2 text-center">
                     <div className="text-xs text-gray-500 mb-0.5">Carbs</div>
                     <div className="font-bold text-gray-900">
-                        {renderValueOrDash(getNutrientValue(food, NUTRIENT_IDS.CARBOHYDRATE))}<span className="text-[10px] font-normal text-gray-500">g</span>
+                        {renderValueOrDash(getNutrientValue(food, NUTRIENT_IDS.CARBOHYDRATE_BY_DIFF))}<span className="text-[10px] font-normal text-gray-500">g</span>
                     </div>
                 </div>
             </div>
@@ -320,18 +338,20 @@ const FoodDetails: React.FC = () => {
                                 // 4. Display Logic
                                 const displayName = info.name;
                                 const isHighlight = info.id && !!NUTRIENT_DISPLAY_NAMES[info.id];
+                                const val = typeof info.amount === 'number' ? info.amount : info.value;
+                                const id = info.nutrient?.id || info.nutrientId;
                                 
                                 // Determine Energy Style
                                 let icon = null;
                                 let rowClass = isHighlight ? 'font-medium bg-emerald-50/50' : 'text-gray-600';
 
-                                if (info.id === NUTRIENT_IDS.ENERGY_ATWATER_SPECIFIC) {
+                                if (id === NUTRIENT_IDS.ENERGY_ATWATER_SPECIFIC) {
                                     icon = <FlaskConical className="w-3 h-3 ml-2 fill-purple-100 text-purple-500" />;
                                     rowClass = 'font-bold bg-purple-50/50 text-purple-800';
-                                } else if (info.id === NUTRIENT_IDS.ENERGY_ATWATER_GENERAL) {
+                                } else if (id === NUTRIENT_IDS.ENERGY_ATWATER_GENERAL) {
                                     icon = <Calculator className="w-3 h-3 ml-2 fill-blue-100 text-blue-500" />;
                                     rowClass = 'font-bold bg-blue-50/50 text-blue-800';
-                                } else if (info.id === NUTRIENT_IDS.ENERGY_KCAL) {
+                                } else if (id === NUTRIENT_IDS.ENERGY_KCAL) {
                                     icon = <BarChart3 className="w-3 h-3 ml-2 fill-gray-100 text-gray-500" />;
                                 }
 
@@ -342,7 +362,7 @@ const FoodDetails: React.FC = () => {
                                             {icon}
                                         </td>
                                         <td className="px-6 py-3 whitespace-nowrap text-sm text-right">
-                                            <span className="font-mono text-gray-900">{renderValueOrDash(info.value)}</span>
+                                            <span className="font-mono text-gray-900">{renderValueOrDash(val)}</span>
                                             <span className="text-[10px] font-normal text-gray-500 ml-1">{info.unitName}</span>
                                         </td>
                                     </tr>
@@ -355,5 +375,3 @@ const FoodDetails: React.FC = () => {
         </div>
     );
 };
-
-export default FoodDetails;
