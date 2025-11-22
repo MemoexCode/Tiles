@@ -55,6 +55,15 @@ export interface FoodPortion {
   gramWeight: number;
   sequenceNumber: number;
   amount: number;
+  portionDescription?: string; // Added: Often contains "1 cup" etc.
+}
+
+// Normalized Portion for internal App usage
+export interface NormalizedFoodPortion {
+  id: number;
+  amount: number;
+  gramWeight: number;
+  unitDescription: string; // The calculated readable unit (e.g. "cup", "slice")
 }
 
 // Detailed Food Item (Foundation/SR Legacy)
@@ -69,6 +78,7 @@ export interface FDCFoodItem {
   foodNutrients: FoodNutrient[]; 
   
   foodPortions?: FoodPortion[];
+  foodCategory?: { description: string; code: string }; // Added for Categorization
   score?: number;
   ndbNumber?: number;
   scientificName?: string;

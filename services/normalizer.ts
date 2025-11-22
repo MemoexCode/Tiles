@@ -1,4 +1,4 @@
-import { FDCFoodItem } from '../types';
+import { FDCFoodItem, FoodPortion, NormalizedFoodPortion } from '../types';
 import { NUTRIENT_IDS } from '../constants';
 
 export interface NormalizedFood {
@@ -10,6 +10,9 @@ export interface NormalizedFood {
   fiber_g: number;
   sodium_mg: number;
   visual_parent: string;
+  category: string;
+  category_code: string;
+  portions: NormalizedFoodPortion[];
 }
 
 /**
@@ -65,6 +68,21 @@ const generateVisualParent = (description: string): string => {
 };
 
 /**
+ * Normalizes a single portion entry.
+ * Prioritizes portionDescription -> measureUnit.name -> 'Einheit'
+ */
+const normalizeFoodPortion = (p: FoodPortion): NormalizedFoodPortion => {
+  const unitDescription = p.portionDescription || p.measureUnit?.name || 'Einheit';
+  
+  return {
+    id: p.id,
+    amount: p.amount,
+    gramWeight: p.gramWeight,
+    unitDescription: unitDescription
+  };
+};
+
+/**
  * Hauptfunktion zur Normalisierung
  * Wandelt das komplexe USDA Format in ein flaches, nutzbares Objekt um.
  */
@@ -82,6 +100,14 @@ export const normalizeFoodItem = (food: FDCFoodItem): NormalizedFood => {
     sugar_g: getValue(food, NUTRIENT_IDS.SUGARS_TOTAL),
     fiber_g: getValue(food, NUTRIENT_IDS.FIBER_TOTAL_DIETARY),
     sodium_mg: getValue(food, NUTRIENT_IDS.SODIUM),
-    visual_parent: generateVisualParent(food.description)
+    
+    visual_parent: generateVisualParent(food.description),
+    
+    // Category Mapping
+    category: food.foodCategory?.description || 'Unknown',
+    category_code: food.foodCategory?.code || '',
+    
+    // Portion Mapping
+    portions: (food.foodPortions || []).map(normalizeFoodPortion)
   };
 };
