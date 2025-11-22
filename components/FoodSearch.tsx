@@ -13,6 +13,8 @@ export const FoodSearch: React.FC = () => {
   const [results, setResults] = useState<SearchResultFood[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [hasSearched, setHasSearched] = useState(false);
+  const [retryStatus, setRetryStatus] = useState("");
+
 
   // 1. Restore State on Mount (Gedächtnis wiederherstellen)
   useEffect(() => {
@@ -36,15 +38,21 @@ export const FoodSearch: React.FC = () => {
     setIsLoading(true);
     setError(null);
     setHasSearched(true);
+    setRetryStatus("");
 
     try {
-      const response = await usdaService.searchFoods(query);
-      setResults(response.foods);
+      const response = await usdaService.searchFoods(query, (attempt) => {
+        setRetryStatus(`Retry ${attempt}/3…`);
+      });
+      // Safeguard: Ensure we always have an array, even if API returns undefined/null
+      const searchResults = response?.foods || [];
+      setResults(searchResults);
+      setRetryStatus("");
       
       // 2. Save State (Gedächtnis speichern)
       sessionStorage.setItem(STORAGE_KEY_SEARCH, JSON.stringify({
         query,
-        results: response.foods,
+        results: searchResults,
         hasSearched: true
       }));
       
@@ -58,6 +66,7 @@ export const FoodSearch: React.FC = () => {
 
   // 3. Fix Nutrient Logic: Return number or null (not string '-') to allow chaining
   const getNutrientValue = (food: SearchResultFood, nutrientId: number): number | null => {
+    if (!food.foodNutrients) return null;
     const nutrient = food.foodNutrients.find(n => n.nutrientId === nutrientId);
     // Check for null/undefined explicitly because 0 is a valid number
     if (nutrient && (typeof nutrient.value === 'number')) {
@@ -124,6 +133,9 @@ export const FoodSearch: React.FC = () => {
         </form>
         <div className="mt-3 flex items-center text-xs text-gray-400 space-x-4">
           <span className="flex items-center"><Database className="w-3 h-3 mr-1" /> Sources: Foundation, SR Legacy</span>
+          {retryStatus && (
+            <span className="text-orange-500 font-medium animate-pulse">{retryStatus}</span>
+          )}
         </div>
       </div>
 
@@ -141,7 +153,7 @@ export const FoodSearch: React.FC = () => {
 
       {/* Results Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {results.map((food) => (
+        {(results || []).map((food) => (
           <div 
             key={food.fdcId} 
             className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden hover:shadow-md transition-all group flex flex-col h-full"
@@ -200,7 +212,7 @@ export const FoodSearch: React.FC = () => {
       </div>
 
       {/* Empty State */}
-      {!isLoading && hasSearched && results.length === 0 && !error && (
+      {!isLoading && hasSearched && (!results || results.length === 0) && !error && (
         <div className="text-center py-20">
           <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
             <Search className="w-8 h-8 text-gray-400" />
