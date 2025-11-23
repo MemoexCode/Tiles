@@ -1,3 +1,4 @@
+
 import React, { useEffect, useState, useMemo } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { ArrowLeft, Tag, BarChart3, FlaskConical, Gauge, Calculator, Utensils, Zap, Database, AlertTriangle, ExternalLink, RefreshCw } from 'lucide-react';
@@ -114,6 +115,13 @@ const renderDbStatus = (dbStatus: DatabaseStatus) => {
 
 // --- Main Component ---
 
+/**
+ * FoodDetails
+ * 
+ * Displays detailed nutrient info.
+ * Handles errors by catching exceptions thrown by usdaService.
+ * NOTE: The service handles the 'usda-proxy' 200 OK wrapper logic and throws real errors if the 'success' field is false.
+ */
 export const FoodDetails: React.FC = () => {
     const { id } = useParams<{ id: string }>();
     const fdcId = Number(id);

@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import { Search, Loader2, Info, Database, ChevronRight, Calculator, FlaskConical } from 'lucide-react';
 import { usdaService } from '../services/usdaService';
@@ -7,6 +8,14 @@ import { Link } from 'react-router-dom';
 
 const STORAGE_KEY_SEARCH = 'TILES_SEARCH_STATE';
 
+/**
+ * FoodSearch Component
+ * 
+ * INTERACTION NOTE:
+ * This component relies on usdaService which communicates with the 'usda-proxy' Edge Function.
+ * The proxy always returns HTTP 200. Error states shown here reflect the 'success' field 
+ * from the proxy response parsed by the service.
+ */
 export const FoodSearch: React.FC = () => {
   const [query, setQuery] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -36,15 +45,18 @@ export const FoodSearch: React.FC = () => {
     setIsLoading(true);
     setError(null);
     setHasSearched(true);
+    setResults([]); // Clear previous results
 
     try {
       const response = await usdaService.searchFoods(query);
-      setResults(response.foods);
+      // FIX: Safeguard against undefined foods array
+      const foodResults = response?.foods || [];
+      setResults(foodResults);
       
       // 2. Save State (Gedächtnis speichern)
       sessionStorage.setItem(STORAGE_KEY_SEARCH, JSON.stringify({
         query,
-        results: response.foods,
+        results: foodResults,
         hasSearched: true
       }));
       
@@ -58,6 +70,9 @@ export const FoodSearch: React.FC = () => {
 
   // 3. Fix Nutrient Logic: Return number or null (not string '-') to allow chaining
   const getNutrientValue = (food: SearchResultFood, nutrientId: number): number | null => {
+    // Safeguard: Ensure foodNutrients exists
+    if (!food.foodNutrients) return null;
+    
     const nutrient = food.foodNutrients.find(n => n.nutrientId === nutrientId);
     // Check for null/undefined explicitly because 0 is a valid number
     if (nutrient && (typeof nutrient.value === 'number')) {
