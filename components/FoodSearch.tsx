@@ -53,6 +53,8 @@ export const FoodSearch: React.FC = () => {
       const foodResults = response?.foods || [];
       setResults(foodResults);
       
+      console.log("[FoodSearch] Search results:", foodResults);
+
       // 2. Save State (Gedächtnis speichern)
       sessionStorage.setItem(STORAGE_KEY_SEARCH, JSON.stringify({
         query,
@@ -61,6 +63,7 @@ export const FoodSearch: React.FC = () => {
       }));
       
     } catch (err) {
+      console.error("[FoodSearch] Search error:", err);
       setError(err instanceof Error ? err.message : 'An unexpected error occurred');
       setResults([]);
     } finally {

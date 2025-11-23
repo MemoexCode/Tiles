@@ -19,6 +19,16 @@ import { normalizeFoodItem } from './normalizer';
  *   error: string | null   // Error message if success is false
  * }
  * 
+ * EDGE FUNCTION LOGGING:
+ * The proxy logs the following for debugging:
+ * - Incoming request action + params
+ * - Target USDA URL
+ * - HTTP Method + Body
+ * - USDA raw status
+ * - USDA safe JSON parsing result
+ * - Final response returned to the client
+ * - Note: The proxy may return HTML or empty bodies on network failure; client-side logging helps diagnose this.
+ * 
  * ERROR HANDLING:
  * - 'invokeError': Indicates a network failure reaching Supabase.
  * - '!response.success': Indicates the USDA API returned an error (handled internally via retries where applicable).
@@ -60,6 +70,18 @@ class USDAService {
       const { data: proxyRes, error: invokeError } = await supabase.functions.invoke('usda-proxy', {
         body: requestBody
       });
+
+      console.groupCollapsed("[usdaService] Proxy Response (Search)");
+      console.log("Action: search");
+      console.log("Params:", requestBody);
+      console.log("Raw Supabase response:", { data: proxyRes, error: invokeError });
+      
+      if (!proxyRes) {
+        console.error("[usdaService] ERROR: Proxy returned null or undefined.");
+      } else if (!proxyRes.success) {
+        console.error("[usdaService] USDA signaled failure:", proxyRes);
+      }
+      console.groupEnd();
 
       if (invokeError) {
         console.error('Supabase Search Invocation Error:', invokeError);
@@ -114,14 +136,28 @@ class USDAService {
 
       // --- ATTEMPT 1: Optimized Fetch (Specific Nutrients) ---
       try {
+        const invokeBody = {
+          action: 'details',
+          fdcId: fdcId,
+          nutrients: API_REQUEST_NUTRIENT_NUMBERS 
+        };
+
         // Proxy Request: Expect { success, status, data, error }
         const { data: proxyRes, error: invokeError } = await supabase.functions.invoke('usda-proxy', {
-          body: {
-            action: 'details',
-            fdcId: fdcId,
-            nutrients: API_REQUEST_NUTRIENT_NUMBERS 
-          }
+          body: invokeBody
         });
+
+        console.groupCollapsed(`[usdaService] Proxy Response (Details - Optimized: ${fdcId})`);
+        console.log("Action: details (optimized)");
+        console.log("Params:", invokeBody);
+        console.log("Raw Supabase response:", { data: proxyRes, error: invokeError });
+
+        if (!proxyRes) {
+          console.error("[usdaService] ERROR: Proxy returned null or undefined.");
+        } else if (!proxyRes.success) {
+          console.error("[usdaService] USDA signaled failure:", proxyRes);
+        }
+        console.groupEnd();
 
         if (invokeError) throw invokeError;
         
@@ -143,13 +179,27 @@ class USDAService {
       // --- ATTEMPT 2: Fallback Fetch (Full Data) ---
       if (!foodData) {
         try {
+          const invokeBody = {
+            action: 'details',
+            fdcId: fdcId
+            // No 'nutrients' param -> Full Fetch
+          };
+
           const { data: proxyRes, error: invokeError } = await supabase.functions.invoke('usda-proxy', {
-            body: {
-              action: 'details',
-              fdcId: fdcId
-              // No 'nutrients' param -> Full Fetch
-            }
+            body: invokeBody
           });
+
+          console.groupCollapsed(`[usdaService] Proxy Response (Details - Fallback: ${fdcId})`);
+          console.log("Action: details (fallback)");
+          console.log("Params:", invokeBody);
+          console.log("Raw Supabase response:", { data: proxyRes, error: invokeError });
+
+          if (!proxyRes) {
+            console.error("[usdaService] ERROR: Proxy returned null or undefined.");
+          } else if (!proxyRes.success) {
+            console.error("[usdaService] USDA signaled failure:", proxyRes);
+          }
+          console.groupEnd();
 
           if (invokeError) throw invokeError;
 

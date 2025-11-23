@@ -160,6 +160,8 @@ export const FoodDetails: React.FC = () => {
             const rawData = await usdaService.getFoodDetails(fdcId);
             const end = performance.now();
             
+            console.log("[FoodDetails] Loaded details:", rawData);
+
             // Simple metric estimation
             setMetrics({
                 totalTime: end - start,
@@ -172,7 +174,7 @@ export const FoodDetails: React.FC = () => {
             
             setFood(normalizedFood);
         } catch (err: any) {
-            console.error("Fehler beim Abrufen der Lebensmitteldetails:", err);
+            console.error("[FoodDetails] Detail error:", err);
             // Use generic error state to trigger UI handling
             setError(err.message || 'Failed to load food details');
         } finally {
