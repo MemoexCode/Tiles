@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Search, Loader2, Info, Database, ChevronRight, Calculator, FlaskConical } from 'lucide-react';
 import { usdaService } from '../services/usdaService';
 import { SearchResultFood, DataType } from '../types';
@@ -7,6 +7,15 @@ import { Link } from 'react-router-dom';
 
 const STORAGE_KEY_SEARCH = 'TILES_SEARCH_STATE';
 
+/**
+ * FoodSearch Component
+ * 
+ * Features:
+ * - Debounced Auto-Search (300ms)
+ * - Manual Search Override
+ * - Retry UI Integration
+ * - Soft Failure States
+ */
 export const FoodSearch: React.FC = () => {
   const [query, setQuery] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -14,8 +23,11 @@ export const FoodSearch: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [hasSearched, setHasSearched] = useState(false);
   const [retryStatus, setRetryStatus] = useState("");
-
-  // Restore State on Mount
+  
+  // Ref to track the last searched query to prevent duplicates/race conditions
+  const lastSearchTerm = useRef<string>('');
+  
+  // 1. Restore State on Mount
   useEffect(() => {
     const savedState = sessionStorage.getItem(STORAGE_KEY_SEARCH);
     if (savedState) {
@@ -24,32 +36,40 @@ export const FoodSearch: React.FC = () => {
         setQuery(parsed.query || '');
         setResults(parsed.results || []);
         setHasSearched(parsed.hasSearched || false);
+        // Sync ref so auto-search doesn't re-trigger immediately if query matches
+        lastSearchTerm.current = parsed.query || '';
       } catch (e) {
         console.error('Failed to restore search state', e);
       }
     }
   }, []);
 
-  // Centralized Search Execution
+  // Shared Search Logic
   const executeSearch = async (searchTerm: string) => {
-    if (!searchTerm.trim()) return;
+    if (!searchTerm.trim()) {
+       setResults([]);
+       setHasSearched(false);
+       return;
+    }
 
     setIsLoading(true);
     setError(null);
     setHasSearched(true);
     setRetryStatus("");
     
+    // Update ref to current attempt
+    lastSearchTerm.current = searchTerm;
+
     try {
-      const response = await usdaService.searchFoods(searchTerm, (attempt) => {
-        setRetryStatus(`Retry ${attempt}/3…`);
-      });
+      const response = await usdaService.searchFoods(searchTerm);
       
-      // Safeguard against undefined response.foods
+      // FIX: Safeguard against undefined foods array
       const foodResults = response?.foods || [];
       setResults(foodResults);
       
       console.log("[FoodSearch] Search results:", foodResults);
 
+      // Save State
       sessionStorage.setItem(STORAGE_KEY_SEARCH, JSON.stringify({
         query: searchTerm,
         results: foodResults,
@@ -58,35 +78,36 @@ export const FoodSearch: React.FC = () => {
       
     } catch (err) {
       console.error("[FoodSearch] Search error:", err);
-      // Soft fail: Just show error, clear results to avoid misleading stale data
+      // Soft fail: Set error state but ensure results are cleared or handled
       setError(err instanceof Error ? err.message : 'An unexpected error occurred');
-      setResults([]); 
+      setResults([]);
     } finally {
       setIsLoading(false);
       setRetryStatus("");
     }
   };
 
-  // Debounced Search Effect (300ms)
+  // 2. Debounced Auto-Search
   useEffect(() => {
-    const timer = setTimeout(() => {
-      // Only execute if query is valid
-      if (query.trim()) {
+    const delayDebounceFn = setTimeout(() => {
+      // Only auto-search if query has content, is different from last search, or if we haven't searched yet but have query (restoration edge case handled by mount effect)
+      if (query.trim() && query !== lastSearchTerm.current) {
         executeSearch(query);
       }
-    }, 300);
+    }, 300); // 300ms delay
 
-    return () => clearTimeout(timer);
+    return () => clearTimeout(delayDebounceFn);
   }, [query]);
 
-  // Handle Manual Submit (Immediate)
-  const handleManualSubmit = (e: React.FormEvent) => {
+  // 3. Manual Search Handler (Enter key / Button)
+  const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
-    if (query.trim()) {
-       executeSearch(query);
-    }
+    if (!query.trim()) return;
+    // Force search even if it matches last term (user explicit retry)
+    executeSearch(query);
   };
 
+  // Helper to get nutrient values safely
   const getNutrientValue = (food: SearchResultFood, nutrientId: number): number | null => {
     if (!food.foodNutrients) return null;
     const nutrient = food.foodNutrients.find(n => n.nutrientId === nutrientId);
@@ -132,7 +153,7 @@ export const FoodSearch: React.FC = () => {
 
       {/* Search Input Card */}
       <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
-        <form onSubmit={handleManualSubmit} className="relative">
+        <form onSubmit={handleSearch} className="relative">
           <input
             type="text"
             value={query}
@@ -141,38 +162,32 @@ export const FoodSearch: React.FC = () => {
             className="w-full pl-12 pr-4 py-4 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white transition-all text-lg"
           />
           <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 text-gray-400 w-6 h-6" />
-          
-          <div className="absolute right-3 top-1/2 transform -translate-y-1/2 flex items-center gap-3">
-             {isLoading ? (
-               <div className="bg-gray-100 px-4 py-2 rounded-lg flex items-center">
-                 <Loader2 className="w-5 h-5 animate-spin text-emerald-600" />
-                 <span className="ml-2 text-sm text-gray-500 font-medium">Searching...</span>
-               </div>
-             ) : (
-               <button
-                type="submit"
-                disabled={!query.trim()}
-                className="bg-emerald-600 hover:bg-emerald-700 text-white px-6 py-2 rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                Search
-              </button>
-             )}
-          </div>
+          <button
+            type="submit"
+            disabled={isLoading || !query.trim()}
+            className="absolute right-3 top-1/2 transform -translate-y-1/2 bg-emerald-600 hover:bg-emerald-700 text-white px-6 py-2 rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {isLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Search'}
+          </button>
         </form>
-        <div className="mt-3 flex items-center justify-between text-xs text-gray-400">
-          <span className="flex items-center"><Database className="w-3 h-3 mr-1" /> Sources: Foundation, SR Legacy</span>
-          {retryStatus && (
-            <span className="text-orange-500 font-medium animate-pulse">{retryStatus}</span>
-          )}
+        <div className="mt-3 flex flex-col md:flex-row md:items-center justify-between">
+           <div className="flex items-center text-xs text-gray-400 space-x-4 mb-2 md:mb-0">
+             <span className="flex items-center"><Database className="w-3 h-3 mr-1" /> Sources: Foundation, SR Legacy</span>
+           </div>
+           {retryStatus && (
+              <p className="text-xs text-gray-500 animate-pulse">{retryStatus}</p>
+           )}
         </div>
       </div>
 
-      {/* Soft Fail / Error State */}
+      {/* Error State - Soft Fail */}
       {error && (
-        <div className="bg-orange-50 border border-orange-200 text-orange-800 p-4 rounded-xl flex items-center shadow-sm animate-fade-in">
-          <Info className="w-5 h-5 mr-3 flex-shrink-0 text-orange-500" />
+        <div className="bg-red-50 border border-red-200 text-red-700 p-4 rounded-xl flex items-start">
+          <Info className="w-5 h-5 mr-3 mt-0.5 flex-shrink-0" />
           <div className="flex-1">
-            <span className="font-medium">Search encountered an issue:</span> {error}
+            <h3 className="font-medium">Search Issue</h3>
+            <p className="text-sm mt-1">{error}</p>
+            <p className="text-xs mt-2 text-red-500">Please try a different term or check your connection.</p>
           </div>
         </div>
       )}
@@ -201,6 +216,7 @@ export const FoodSearch: React.FC = () => {
               </h3>
 
               <div className="grid grid-cols-3 gap-2 mt-6">
+                {/* Quick Stats */}
                 <div className="bg-gray-50 rounded-lg p-2 text-center">
                    <div className="text-xs text-gray-500 mb-0.5">Calories</div>
                    <div className="font-bold text-gray-900">
@@ -242,8 +258,16 @@ export const FoodSearch: React.FC = () => {
             <Search className="w-8 h-8 text-gray-400" />
           </div>
           <h3 className="text-lg font-medium text-gray-900">No ingredients found</h3>
-          <p className="text-gray-500 mt-1">Try adjusting your search terms or spelling.</p>
+          <p className="text-gray-500 mt-1">Try adjusting your search terms.</p>
         </div>
+      )}
+      
+      {/* Loading Skeleton during active search */}
+      {isLoading && results.length === 0 && (
+         <div className="text-center py-20 opacity-50">
+           <Loader2 className="w-10 h-10 animate-spin mx-auto text-emerald-500 mb-4" />
+           <p className="text-gray-500">Searching database...</p>
+         </div>
       )}
     </div>
   );

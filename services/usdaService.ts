@@ -1,5 +1,6 @@
+
 import { DEFAULT_PAGE_SIZE, DEFAULT_DATA_TYPES, API_REQUEST_NUTRIENT_NUMBERS } from '../constants';
-import { FDCSearchResponse, FDCFoodItem, USDAFoodRaw, NormalizedFood } from '../types';
+import { FDCSearchResponse, FDCFoodItem, USDAFoodRaw } from '../types';
 import { supabase } from './supabase';
 import { normalizeFoodItem } from './normalizer';
 
@@ -33,9 +34,8 @@ import { normalizeFoodItem } from './normalizer';
  * - '!response.success': Indicates the USDA API returned an error (handled internally via retries where applicable).
  * 
  * RETRY & FALLBACK LOGIC:
- * - Implements a 'withRetry' wrapper for robust network handling.
- * - Attempt 1: Optimized Fetch (Details) or Standard Search.
- * - Attempt 2+: Fallback triggers if configured.
+ * - Attempt 1: Optimized Fetch requesting only specific nutrient IDs (API_REQUEST_NUTRIENT_NUMBERS) to minimize packet size.
+ * - Attempt 2: Fallback to Full Fetch if Attempt 1 fails (e.g., partial data, strict parsing issues).
  * - Cache: Valid responses are cached in Supabase 'usda_food_raw' table for 30 days.
  */
 
@@ -50,85 +50,64 @@ class USDAService {
     return diffDays <= this.CACHE_TTL_DAYS;
   }
 
-  // Generic Retry Wrapper
-  private async withRetry<T>(
-    operation: () => Promise<T>,
-    onRetry?: (attempt: number) => void,
-    retries = 3,
-    delay = 400
-  ): Promise<T> {
-    let lastError: any;
-    for (let i = 0; i < retries; i++) {
-      try {
-        return await operation();
-      } catch (error) {
-        lastError = error;
-        // Don't wait on the last attempt
-        if (i < retries - 1) {
-           const attemptNum = i + 1;
-           if (onRetry) onRetry(attemptNum);
-           console.log(`[usdaService] Retry attempt ${attemptNum}/${retries} after error:`, error);
-           await new Promise(r => setTimeout(r, delay));
-        }
-      }
-    }
-    throw lastError;
-  }
-
   async searchFoods(
     query: string, 
-    onRetry?: (attempt: number) => void,
     pageNumber = 1, 
     dataTypes = DEFAULT_DATA_TYPES
   ): Promise<FDCSearchResponse> {
-    
-    return this.withRetry(async () => {
-        const requestBody = {
-          action: 'search',
-          query: query,
-          dataType: dataTypes,
-          pageSize: DEFAULT_PAGE_SIZE,
-          pageNumber: pageNumber,
-          sortBy: 'dataType.keyword',
-          sortOrder: 'asc'
-        };
+    try {
+      const requestBody = {
+        action: 'search',
+        query: query,
+        dataType: dataTypes,
+        pageSize: DEFAULT_PAGE_SIZE,
+        pageNumber: pageNumber,
+        sortBy: 'dataType.keyword',
+        sortOrder: 'asc'
+      };
 
-        const { data: proxyRes, error: invokeError } = await supabase.functions.invoke('usda-proxy', {
-          body: requestBody
-        });
+      // NOTE: Proxy always returns 200. We must parse the wrapper.
+      const { data: proxyRes, error: invokeError } = await supabase.functions.invoke('usda-proxy', {
+        body: requestBody
+      });
 
-        console.groupCollapsed("[usdaService] Proxy Response (Search)");
-        console.log("Action: search");
-        console.log("Params:", requestBody);
-        console.log("Raw Supabase response:", { data: proxyRes, error: invokeError });
-        
-        if (!proxyRes) {
-          console.error("[usdaService] ERROR: Proxy returned null or undefined.");
-        } else if (!proxyRes.success) {
-          console.error("[usdaService] USDA signaled failure:", proxyRes);
-        }
-        console.groupEnd();
+      console.groupCollapsed("[usdaService] Proxy Response (Search)");
+      console.log("Action: search");
+      console.log("Params:", requestBody);
+      console.log("Raw Supabase response:", { data: proxyRes, error: invokeError });
+      
+      if (!proxyRes) {
+        console.error("[usdaService] ERROR: Proxy returned null or undefined.");
+      } else if (!proxyRes.success) {
+        console.error("[usdaService] USDA signaled failure:", proxyRes);
+      }
+      console.groupEnd();
 
-        if (invokeError) {
-          throw new Error(invokeError.message || 'Failed to contact search proxy');
-        }
+      if (invokeError) {
+        console.error('Supabase Search Invocation Error:', invokeError);
+        throw new Error(invokeError.message || 'Failed to contact search proxy');
+      }
 
-        if (!proxyRes || !proxyRes.success) {
-          const errorMsg = proxyRes?.error || `USDA Search Error: Status ${proxyRes?.status}`;
-          throw new Error(errorMsg);
-        }
+      if (!proxyRes || !proxyRes.success) {
+        const errorMsg = proxyRes?.error || `USDA Search Error: Status ${proxyRes?.status}`;
+        console.error(errorMsg);
+        throw new Error(errorMsg);
+      }
 
-        return proxyRes.data as FDCSearchResponse;
-    }, onRetry);
+      return proxyRes.data as FDCSearchResponse;
+
+    } catch (error) {
+      console.error('Error searching foods:', error);
+      throw error;
+    }
   }
 
-  async getFoodDetails(fdcId: number, onRetry?: (attempt: number) => void): Promise<NormalizedFood> {
+  async getFoodDetails(fdcId: number): Promise<FDCFoodItem> {
     const startTotal = performance.now();
     let networkTime = 0;
     let source = 'Cache';
-    let foodData: FDCFoodItem | null = null;
 
-    // 1. Check Cache First (No retry needed for DB cache)
+    // 1. Check Cache
     try {
       const { data: cachedData, error } = await supabase
         .from('usda_food_raw')
@@ -139,15 +118,9 @@ class USDAService {
       if (cachedData && !error) {
         const entry = cachedData as USDAFoodRaw;
         if (this.isCacheValid(entry.fetched_at)) {
-          // Check if we have a normalized version stored, otherwise normalize raw
-          if (entry.normalized_json) {
-              const endTotal = performance.now();
-              this.logPerformance(fdcId, 'Cache (Normalized)', 0, endTotal - startTotal, 0);
-              return entry.normalized_json as NormalizedFood;
-          } else {
-              // Fallback for older cache entries
-              return normalizeFoodItem(entry.raw_json);
-          }
+          const endTotal = performance.now();
+          this.logPerformance(fdcId, 'Cache', 0, endTotal - startTotal, entry.raw_json.foodNutrients?.length || 0);
+          return entry.raw_json;
         } else {
           console.log(`[Cache Expired] Refreshing ${fdcId} via Proxy`);
         }
@@ -156,90 +129,111 @@ class USDAService {
       console.warn('Cache lookup check failed/skipped', err);
     }
 
-    // 2. Fetch via Proxy (Edge Function) with Retry Logic
+    // 2. Fetch via Proxy (Edge Function) with Fallback Strategy
     try {
-      foodData = await this.withRetry(async () => {
-          const startNetwork = performance.now();
-          let fetchedData: FDCFoodItem | null = null;
+      const startNetwork = performance.now();
+      let foodData: FDCFoodItem | null = null;
 
-          // --- ATTEMPT A: Optimized Fetch (Specific Nutrients) ---
-          try {
-            const invokeBody = {
-              action: 'details',
-              fdcId: fdcId,
-              nutrients: API_REQUEST_NUTRIENT_NUMBERS 
-            };
+      // --- ATTEMPT 1: Optimized Fetch (Specific Nutrients) ---
+      try {
+        const invokeBody = {
+          action: 'details',
+          fdcId: fdcId,
+          nutrients: API_REQUEST_NUTRIENT_NUMBERS 
+        };
 
-            const { data: proxyRes, error: invokeError } = await supabase.functions.invoke('usda-proxy', {
-              body: invokeBody
-            });
+        // Proxy Request: Expect { success, status, data, error }
+        const { data: proxyRes, error: invokeError } = await supabase.functions.invoke('usda-proxy', {
+          body: invokeBody
+        });
 
-            console.groupCollapsed(`[usdaService] Proxy Response (Details - Optimized: ${fdcId})`);
-            console.log("Action: details (optimized)");
-            console.log("Params:", invokeBody);
-            console.log("Raw Supabase response:", { data: proxyRes, error: invokeError });
-            console.groupEnd();
+        console.groupCollapsed(`[usdaService] Proxy Response (Details - Optimized: ${fdcId})`);
+        console.log("Action: details (optimized)");
+        console.log("Params:", invokeBody);
+        console.log("Raw Supabase response:", { data: proxyRes, error: invokeError });
 
-            if (invokeError) throw invokeError;
-            if (!proxyRes || !proxyRes.success) throw new Error(proxyRes?.error || `USDA API Error`);
-            if (!proxyRes.data) throw new Error('No data returned');
-            
-            fetchedData = proxyRes.data;
+        if (!proxyRes) {
+          console.error("[usdaService] ERROR: Proxy returned null or undefined.");
+        } else if (!proxyRes.success) {
+          console.error("[usdaService] USDA signaled failure:", proxyRes);
+        }
+        console.groupEnd();
 
-          } catch (firstError) {
-             console.warn(`[USDA] Optimized fetch failed for ID ${fdcId}. Initiating Fallback...`);
-             // Internal swallow to trigger fallback below
+        if (invokeError) throw invokeError;
+        
+        // If USDA returned an error (e.g. 400/500), proxyRes.success will be false.
+        if (!proxyRes || !proxyRes.success) {
+            throw new Error(proxyRes?.error || `USDA API Error ${proxyRes?.status}`);
+        }
+        
+        if (!proxyRes.data) throw new Error('No data returned from optimized fetch');
+        
+        foodData = proxyRes.data;
+
+      } catch (firstError) {
+        console.warn(`[USDA] Optimized fetch failed for ID ${fdcId}. Reason:`, firstError);
+        console.warn(`[USDA] Initiating Fallback: Full Dataset Fetch...`);
+        // Swallow error to allow fallback
+      }
+
+      // --- ATTEMPT 2: Fallback Fetch (Full Data) ---
+      if (!foodData) {
+        try {
+          const invokeBody = {
+            action: 'details',
+            fdcId: fdcId
+            // No 'nutrients' param -> Full Fetch
+          };
+
+          const { data: proxyRes, error: invokeError } = await supabase.functions.invoke('usda-proxy', {
+            body: invokeBody
+          });
+
+          console.groupCollapsed(`[usdaService] Proxy Response (Details - Fallback: ${fdcId})`);
+          console.log("Action: details (fallback)");
+          console.log("Params:", invokeBody);
+          console.log("Raw Supabase response:", { data: proxyRes, error: invokeError });
+
+          if (!proxyRes) {
+            console.error("[usdaService] ERROR: Proxy returned null or undefined.");
+          } else if (!proxyRes.success) {
+            console.error("[usdaService] USDA signaled failure:", proxyRes);
+          }
+          console.groupEnd();
+
+          if (invokeError) throw invokeError;
+
+          if (!proxyRes || !proxyRes.success) {
+            throw new Error(proxyRes?.error || `USDA Fallback Error ${proxyRes?.status}`);
           }
 
-          // --- ATTEMPT B: Fallback Fetch (Full Data) ---
-          if (!fetchedData) {
-              const invokeBody = {
-                action: 'details',
-                fdcId: fdcId
-              };
+          if (!proxyRes.data) throw new Error('Fallback fetch returned no data');
+          
+          foodData = proxyRes.data;
 
-              const { data: proxyRes, error: invokeError } = await supabase.functions.invoke('usda-proxy', {
-                body: invokeBody
-              });
+        } catch (secondError) {
+          console.error(`[USDA] Critical: Both fetch attempts failed for ID ${fdcId}.`, secondError);
+          throw secondError;
+        }
+      }
 
-              console.groupCollapsed(`[usdaService] Proxy Response (Details - Fallback: ${fdcId})`);
-              console.log("Action: details (fallback)");
-              console.log("Params:", invokeBody);
-              console.log("Raw Supabase response:", { data: proxyRes, error: invokeError });
-              
-              if (!proxyRes || !proxyRes.success) {
-                 console.error("[usdaService] USDA signaled failure in fallback:", proxyRes);
-              }
-              console.groupEnd();
-
-              if (invokeError) throw invokeError;
-              if (!proxyRes || !proxyRes.success) throw new Error(proxyRes?.error || `USDA Fallback Error`);
-              
-              fetchedData = proxyRes.data;
-          }
-
-          if (!fetchedData) throw new Error("Both fetch strategies failed.");
-
-          const endNetwork = performance.now();
-          networkTime = endNetwork - startNetwork;
-          return fetchedData;
-      }, onRetry);
-
-      if (!foodData) throw new Error("Failed to retrieve food data.");
-
-      // 3. Normalize & Cache
-      const normalizedData = normalizeFoodItem(foodData);
+      const endNetwork = performance.now();
+      networkTime = endNetwork - startNetwork;
       source = 'Network';
 
-      // Fire and forget cache update
-      this.saveToCache(fdcId, foodData, normalizedData).catch(err => 
-        console.error('Background cache save failed:', err)
-      );
+      // 3. Save to Cache & Normalize
+      if (foodData) {
+        this.saveToCache(fdcId, foodData).catch(err => 
+          console.error('Background cache save failed:', err)
+        );
 
-      const endTotal = performance.now();
-      this.logPerformance(fdcId, source, networkTime, endTotal - startTotal, foodData.foodNutrients?.length || 0);
-      
-      return normalizedData;
+        const endTotal = performance.now();
+        this.logPerformance(fdcId, source, networkTime, endTotal - startTotal, foodData.foodNutrients?.length || 0);
+        
+        return foodData;
+      } else {
+        throw new Error('Unexpected state: No food data available after success path');
+      }
 
     } catch (error) {
       console.error(`Error processing food ${fdcId}:`, error);
@@ -247,14 +241,16 @@ class USDAService {
     }
   }
 
-  private async saveToCache(fdcId: number, rawData: FDCFoodItem, normalizedData: NormalizedFood) {
+  private async saveToCache(fdcId: number, data: FDCFoodItem) {
     try {
+      const normalizedData = normalizeFoodItem(data);
+
       const { error } = await supabase
         .from('usda_food_raw')
         .upsert({
           fdc_id: fdcId,
-          data_type: rawData.dataType,
-          raw_json: rawData,
+          data_type: data.dataType,
+          raw_json: data,
           fetched_at: new Date().toISOString(),
           visual_parent: normalizedData.visual_parent,
           normalized_json: normalizedData

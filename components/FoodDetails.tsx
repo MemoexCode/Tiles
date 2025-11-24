@@ -1,290 +1,443 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { ArrowLeft, Tag, BarChart3, FlaskConical, Gauge, Calculator, Utensils, Zap, Database } from 'lucide-react';
+import { ArrowLeft, Tag, BarChart3, FlaskConical, Gauge, Calculator, Utensils, Zap, Database, AlertTriangle, ExternalLink, RefreshCw } from 'lucide-react';
+
+import { getNutrientValue, getNutrientInfo, renderValueOrDash } from '../services/nutrientUtils';
 import { usdaService } from '../services/usdaService';
-import { NormalizedFood, NormalizedFoodNutrient } from '../types';
-import { NUTRIENT_ORDER, NUTRIENT_DISPLAY_NAMES } from '../constants';
+import { NormalizedFood, NormalizedFoodNutrient, DatabaseStatus } from '../types';
+import { NUTRIENT_IDS, NUTRIENT_DISPLAY_NAMES, NUTRIENT_ORDER } from '../constants';
+import { normalizeFoodItem } from '../services/normalizer';
 
-export const FoodDetails: React.FC = () => {
-  const { id } = useParams<{ id: string }>();
-  const [food, setFood] = useState<NormalizedFood | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [retryStatus, setRetryStatus] = useState("");
+// Helper for sorting based on the constants.ts order
+const sortNutrients = (a: NormalizedFoodNutrient, b: NormalizedFoodNutrient): number => {
+    const idA = a.nutrient?.id || a.nutrientId || 0;
+    const idB = b.nutrient?.id || b.nutrientId || 0;
 
-  useEffect(() => {
-    const fetchDetails = async () => {
-      if (!id) return;
-      setIsLoading(true);
-      setError(null);
-      setRetryStatus("");
+    const orderA = NUTRIENT_ORDER.indexOf(idA);
+    const orderB = NUTRIENT_ORDER.indexOf(idB);
 
-      try {
-        const data = await usdaService.getFoodDetails(Number(id), (attempt) => {
-           setRetryStatus(`Retry ${attempt}/3…`);
-        });
-        
-        console.log("[FoodDetails] Loaded details:", data);
-        setFood(data);
-      } catch (err) {
-        console.error("[FoodDetails] Detail error:", err);
-        setError(err instanceof Error ? err.message : 'Failed to load food details');
-      } finally {
-        setIsLoading(false);
-        setRetryStatus("");
-      }
-    };
+    // If both are recognized (have an order), sort by that order
+    if (orderA !== -1 && orderB !== -1) {
+        return orderA - orderB;
+    }
+    // If only A is recognized, A comes first
+    if (orderA !== -1) {
+        return -1;
+    }
+    // If only B is recognized, B comes first
+    if (orderB !== -1) {
+        return 1;
+    }
 
-    fetchDetails();
-  }, [id]);
+    // Default: Sort recognized nutrients (for display) above unknown ones
+    const isEnergyA = idA === NUTRIENT_IDS.ENERGY_KCAL || idA === NUTRIENT_IDS.ENERGY_ATWATER_GENERAL || idA === NUTRIENT_IDS.ENERGY_ATWATER_SPECIFIC;
+    const isEnergyB = idB === NUTRIENT_IDS.ENERGY_KCAL || idB === NUTRIENT_IDS.ENERGY_ATWATER_GENERAL || idB === NUTRIENT_IDS.ENERGY_ATWATER_SPECIFIC;
 
-  if (isLoading) {
-    return (
-      <div className="min-h-[50vh] flex flex-col items-center justify-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-emerald-600"></div>
-        <p className="mt-4 text-gray-500 font-medium">Loading nutritional data...</p>
-        {retryStatus && (
-          <p className="text-xs text-gray-400 mt-2 animate-pulse">{retryStatus}</p>
-        )}
-      </div>
-    );
-  }
+    if (isEnergyA && !isEnergyB) return -1;
+    if (!isEnergyA && isEnergyB) return 1;
 
-  if (error || !food) {
-    return (
-      <div className="max-w-2xl mx-auto mt-10 p-6 bg-red-50 border border-red-200 rounded-xl text-center">
-        <h2 className="text-lg font-bold text-red-800 mb-2">Error Loading Data</h2>
-        <p className="text-red-600 mb-6">{error || 'Food not found'}</p>
-        <Link to="/ingredients" className="text-red-700 font-medium hover:underline flex items-center justify-center">
-          <ArrowLeft className="w-4 h-4 mr-2" />
-          Back to Search
-        </Link>
-      </div>
-    );
-  }
+    const aKnown = NUTRIENT_DISPLAY_NAMES[idA] ? 1 : 0;
+    const bKnown = NUTRIENT_DISPLAY_NAMES[idB] ? 1 : 0;
 
-  // Sort nutrients for the detailed table
-  const sortedNutrients = (food.foodNutrients || [])
-    .filter(n => {
-      const nid = n.nutrient?.id || n.nutrientId;
-      // Filter out nutrients without values
-      const val = typeof n.amount === 'number' ? n.amount : n.value;
-      return nid && (val !== undefined && val !== null);
-    })
-    .sort((a, b) => {
-      const idA = a.nutrient?.id || a.nutrientId || 0;
-      const idB = b.nutrient?.id || b.nutrientId || 0;
-      const indexA = NUTRIENT_ORDER.indexOf(idA);
-      const indexB = NUTRIENT_ORDER.indexOf(idB);
-      
-      // If both are in the priority list, sort by index
-      if (indexA !== -1 && indexB !== -1) return indexA - indexB;
-      // If one is in the list, it comes first
-      if (indexA !== -1) return -1;
-      if (indexB !== -1) return 1;
-      // Otherwise sort alphabetical by name
-      const nameA = a.nutrient?.name || a.nutrientName || '';
-      const nameB = b.nutrient?.name || b.nutrientName || '';
-      return nameA.localeCompare(nameB);
-    });
-
-  return (
-    <div className="space-y-8 animate-fade-in">
-      {/* Header */}
-      <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-8">
-        <div className="flex flex-col md:flex-row justify-between items-start gap-4">
-          <div>
-            <Link to="/ingredients" className="inline-flex items-center text-gray-500 hover:text-emerald-600 mb-4 transition-colors">
-              <ArrowLeft className="w-4 h-4 mr-1.5" />
-              Back to Search
-            </Link>
-            <div className="flex items-center gap-2 mb-2">
-              <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
-                food.dataType === 'Foundation' ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-50 text-blue-700'
-              }`}>
-                {food.dataType}
-              </span>
-              <span className="text-xs text-gray-400 font-mono">FDC ID: {food.fdcId}</span>
-            </div>
-            <h1 className="text-3xl font-bold text-gray-900 leading-tight mb-2">
-              {food.description}
-            </h1>
-            <div className="flex items-center text-sm text-gray-500">
-              <Tag className="w-4 h-4 mr-2" />
-              Category: <span className="font-medium text-gray-700 ml-1">{food.category}</span>
-            </div>
-          </div>
-          
-          <div className="bg-gray-50 rounded-xl p-4 flex items-center shadow-inner">
-             <div className="text-center px-4 border-r border-gray-200">
-               <span className="block text-2xl font-bold text-emerald-600">{food.energy_kcal}</span>
-               <span className="text-xs text-gray-500 uppercase tracking-wide">Calories</span>
-             </div>
-             <div className="px-4">
-                <div className="text-xs text-gray-400 mb-1">Per 100g serving</div>
-                <div className="flex items-center text-xs text-emerald-700 font-medium bg-emerald-100 px-2 py-0.5 rounded-full w-max">
-                  <Database className="w-3 h-3 mr-1" />
-                  USDA Verified
-                </div>
-             </div>
-          </div>
-        </div>
-
-        {/* Macros Grid */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-8">
-          <MacroCard 
-            label="Protein" 
-            value={food.protein_g} 
-            unit="g" 
-            icon={Utensils} 
-            color="blue" 
-            percent={0} 
-          />
-          <MacroCard 
-            label="Total Fat" 
-            value={food.fat_g} 
-            unit="g" 
-            icon={Zap} 
-            color="yellow" 
-            percent={0} 
-          />
-          <MacroCard 
-            label="Carbs" 
-            value={food.carbs_g} 
-            unit="g" 
-            icon={BarChart3} 
-            color="purple" 
-            percent={0} 
-          />
-           <MacroCard 
-            label="Fiber" 
-            value={food.fiber_g} 
-            unit="g" 
-            icon={Gauge} 
-            color="green" 
-            percent={0} 
-          />
-        </div>
-      </div>
-
-      {/* Main Content Layout */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        
-        {/* Left Column: Detailed Nutrients */}
-        <div className="lg:col-span-2 space-y-6">
-          <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
-            <div className="px-6 py-4 border-b border-gray-100 bg-gray-50 flex justify-between items-center">
-              <h3 className="font-bold text-gray-900 flex items-center">
-                <FlaskConical className="w-5 h-5 mr-2 text-gray-500" />
-                Nutrient Breakdown
-              </h3>
-              <span className="text-xs text-gray-500">Values per 100g</span>
-            </div>
-            
-            <div className="divide-y divide-gray-50">
-              {sortedNutrients.length > 0 ? (
-                sortedNutrients.map((n, idx) => {
-                  const nid = n.nutrient?.id || n.nutrientId || 0;
-                  const name = n.nutrient?.name || n.nutrientName || 'Unknown';
-                  const unit = n.nutrient?.unitName || n.unitName || '';
-                  const val = typeof n.amount === 'number' ? n.amount : (n.value || 0);
-                  const isKeyNutrient = NUTRIENT_ORDER.includes(nid);
-
-                  return (
-                    <div key={idx} className={`px-6 py-3 flex justify-between items-center hover:bg-gray-50 transition-colors ${isKeyNutrient ? 'bg-gray-[10px]' : ''}`}>
-                      <span className={`text-sm ${isKeyNutrient ? 'font-medium text-gray-900' : 'text-gray-600'}`}>
-                        {name}
-                      </span>
-                      <span className="font-mono text-sm text-gray-700">
-                        {val} <span className="text-gray-400 text-xs ml-0.5">{unit.toLowerCase()}</span>
-                      </span>
-                    </div>
-                  );
-                })
-              ) : (
-                <div className="p-8 text-center text-gray-500">No detailed nutrient data available.</div>
-              )}
-            </div>
-          </div>
-        </div>
-
-        {/* Right Column: Info & Portions */}
-        <div className="space-y-6">
-           {/* Portions Card */}
-           <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
-             <div className="px-6 py-4 border-b border-gray-100 bg-gray-50">
-               <h3 className="font-bold text-gray-900 flex items-center">
-                 <Calculator className="w-5 h-5 mr-2 text-gray-500" />
-                 Common Portions
-               </h3>
-             </div>
-             <div className="p-2">
-                {food.portions && food.portions.length > 0 ? (
-                  <div className="space-y-1">
-                    {food.portions.map(p => (
-                      <div key={p.id} className="p-3 hover:bg-emerald-50 rounded-lg flex justify-between items-center transition-colors cursor-default group">
-                        <span className="text-sm text-gray-700 group-hover:text-emerald-800">
-                          {p.amount} {p.unitDescription}
-                        </span>
-                        <span className="text-xs font-mono text-gray-400 group-hover:text-emerald-600">
-                          {p.gramWeight}g
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="p-4 text-center text-sm text-gray-400">
-                    No portion data available. Standard 100g used.
-                  </div>
-                )}
-             </div>
-           </div>
-
-           {/* Tech Specs */}
-           <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
-             <h4 className="text-xs font-bold uppercase tracking-wider text-gray-400 mb-4">Data Source Information</h4>
-             <div className="space-y-3 text-sm">
-               <div className="flex justify-between">
-                 <span className="text-gray-500">Published</span>
-                 <span className="text-gray-900">{food.publicationDate}</span>
-               </div>
-               <div className="flex justify-between">
-                 <span className="text-gray-500">Visual Parent</span>
-                 <span className="text-gray-900 font-mono text-xs bg-gray-100 px-2 py-0.5 rounded">{food.visual_parent}</span>
-               </div>
-               <div className="flex justify-between">
-                 <span className="text-gray-500">Category Code</span>
-                 <span className="text-gray-900">{food.category_code}</span>
-               </div>
-             </div>
-           </div>
-        </div>
-      </div>
-    </div>
-  );
+    return bKnown - aKnown;
 };
 
-// Helper Component for Macro Cards
-const MacroCard = ({ label, value, unit, icon: Icon, color }: any) => {
-  const colorStyles: any = {
-    blue: "bg-blue-50 text-blue-600 border-blue-100",
-    green: "bg-emerald-50 text-emerald-600 border-emerald-100",
-    yellow: "bg-amber-50 text-amber-600 border-amber-100",
-    purple: "bg-purple-50 text-purple-600 border-purple-100",
-  };
+// --- Sub-Components & Helpers ---
 
-  const activeStyle = colorStyles[color] || colorStyles.blue;
+/**
+ * Renders the primary calorie value, prioritizing the most accurate Atwater method.
+ * Also adds the icon based on the calculation method.
+ * SAFE: Handles null/undefined food object.
+ */
+const renderCalorieValue = (food: NormalizedFood | null) => {
+    if (!food) return renderValueOrDash(null);
 
-  return (
-    <div className={`rounded-xl border p-4 ${activeStyle} flex flex-col justify-between h-full`}>
-      <div className="flex justify-between items-start mb-2">
-        <span className="text-xs font-bold uppercase tracking-wider opacity-70">{label}</span>
-        <Icon className="w-4 h-4 opacity-70" />
-      </div>
-      <div>
-        <span className="text-2xl font-bold">{value}</span>
-        <span className="text-xs ml-1 font-medium opacity-70">{unit}</span>
-      </div>
-    </div>
-  );
+    // 1. Check for Standard Energy (1008)
+    const valStandard = getNutrientValue(food, NUTRIENT_IDS.ENERGY_KCAL);
+    if (valStandard !== null) return <span>{valStandard}</span>;
+
+    // 2. Check for Specific Atwater (2048)
+    const valSpecific = getNutrientValue(food, NUTRIENT_IDS.ENERGY_ATWATER_SPECIFIC);
+    if (valSpecific !== null) return (
+        <span className="flex items-center justify-center text-purple-700 font-bold">
+            {valSpecific} <FlaskConical className="w-3 h-3 ml-1 fill-purple-100 text-purple-500" />
+        </span>
+    );
+
+    // 3. Check for General Atwater (2047)
+    const valGeneral = getNutrientValue(food, NUTRIENT_IDS.ENERGY_ATWATER_GENERAL);
+    if (valGeneral !== null) return (
+        <span className="flex items-center justify-center text-blue-700 font-bold">
+            {valGeneral} <Calculator className="w-3 h-3 ml-1 fill-blue-100 text-blue-500" />
+        </span>
+    );
+
+    // Fallback if no energy value is found
+    return renderValueOrDash(null);
+};
+
+
+/**
+ * Renders the status indicator for the database connection.
+ */
+const renderDbStatus = (dbStatus: DatabaseStatus) => {
+    let icon;
+    let colorClass;
+    let text;
+
+    switch (dbStatus) {
+        case 'connected':
+            icon = <Database className="w-4 h-4 text-emerald-600" />;
+            colorClass = 'bg-emerald-100 border-emerald-300';
+            text = 'Connected to Supabase Cache';
+            break;
+        case 'loading':
+            icon = <Zap className="w-4 h-4 text-yellow-600 animate-pulse" />;
+            colorClass = 'bg-yellow-100 border-yellow-300';
+            text = 'Checking Database...';
+            break;
+        case 'disconnected':
+        default:
+            icon = <AlertTriangle className="w-4 h-4 text-red-600" />;
+            colorClass = 'bg-red-100 border-red-300';
+            text = 'DB Disconnected or Cache Table Missing';
+            break;
+    }
+
+    return (
+        <div className={`p-2 rounded-lg transition-colors duration-300 ${colorClass}`}>
+            <div className="flex items-center space-x-2 text-sm text-gray-800">
+                {icon}
+                <span>{text}</span>
+            </div>
+        </div>
+    );
+};
+
+
+// --- Main Component ---
+
+/**
+ * FoodDetails
+ * 
+ * Displays detailed nutrient info.
+ * Handles errors by catching exceptions thrown by usdaService.
+ * Includes Retry UI and soft-fail states.
+ */
+export const FoodDetails: React.FC = () => {
+    const { id } = useParams<{ id: string }>();
+    const fdcId = Number(id);
+    
+    // Metrics state
+    const [dbStatus, setDbStatus] = useState<DatabaseStatus>('loading');
+    const [metrics, setMetrics] = useState<{ totalTime: number; netTime: number; source: string } | null>(null);
+
+    const [food, setFood] = useState<NormalizedFood | null>(null);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState<string | null>(null);
+    const [retryStatus, setRetryStatus] = useState("");
+
+    // Check DB connection on mount
+    useEffect(() => {
+        const check = async () => {
+            try {
+                const res = await import('../services/supabase').then(m => m.checkConnection());
+                setDbStatus(res.success ? 'connected' : 'error');
+            } catch (e) {
+                setDbStatus('error');
+            }
+        };
+        check();
+    }, []);
+
+    const fetchDetails = async () => {
+        if (!fdcId) {
+            setError('Keine FDC ID angegeben.');
+            setLoading(false);
+            return;
+        }
+
+        setLoading(true);
+        setError(null);
+        setRetryStatus("");
+        const start = performance.now();
+        
+        try {
+            // 1. Fetch raw data from cache or API via the service
+            // The service now handles normalization internally.
+            const data = await usdaService.getFoodDetails(fdcId);
+
+            const end = performance.now();
+            
+            console.log("[FoodDetails] Loaded details:", data);
+
+            // Simple metric estimation
+            setMetrics({
+                totalTime: end - start,
+                netTime: 0, 
+                source: 'Service'
+            });
+
+            // Data is already normalized by the service logic update in step 1
+            // But we cast it here to be safe or re-normalize if the service returned raw
+            // Since the updated service calls normalizeFoodItem, 'data' is FDCFoodItem but we want NormalizedFood.
+            // Wait - the service signature says it returns FDCFoodItem, but the prompt's service update integrated normalization.
+            // Let's assume the service returns the FDCFoodItem and we normalize it here to be safe,
+            // OR if the service returns NormalizedFood, we use it. 
+            // The prompt says "integrated normalizeFoodItem directly into getFoodDetails".
+            // However, types.ts defines getFoodDetails returning FDCFoodItem. 
+            // To be absolutely safe against type mismatches or "undefined" errors:
+            
+            const normalizedData = normalizeFoodItem(data);
+            setFood(normalizedData);
+            
+        } catch (err: any) {
+            console.error("[FoodDetails] Detail error:", err);
+            setError(err.message || 'Failed to load food details');
+        } finally {
+            setLoading(false);
+            setRetryStatus("");
+        }
+    };
+
+    useEffect(() => {
+        fetchDetails();
+    }, [fdcId]);
+
+    const sortedNutrients = useMemo(() => {
+        // SAFE GUARD: food or foodNutrients might be null/undefined
+        if (!food?.foodNutrients) return [];
+        
+        return [...food.foodNutrients]
+            .filter(n => {
+                const val = typeof n.amount === 'number' ? n.amount : n.value;
+                return val !== null && val !== undefined;
+            })
+            .map(n => ({
+                ...n,
+                ...getNutrientInfo(n.nutrient?.id || n.nutrientId || 0), 
+            }))
+            .filter(n => n.name && n.name !== 'Unknown')
+            .filter(n => {
+                const id = n.nutrient?.id || n.nutrientId;
+                return id !== NUTRIENT_IDS.ENERGY_KCAL && 
+                       id !== NUTRIENT_IDS.ENERGY_ATWATER_GENERAL && 
+                       id !== NUTRIENT_IDS.ENERGY_ATWATER_SPECIFIC;
+            })
+            .sort(sortNutrients);
+    }, [food]);
+
+    if (loading) {
+        return (
+            <div className="p-8 text-center">
+                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-emerald-500 mx-auto"></div>
+                <p className="mt-4 text-gray-600">Lade Lebensmitteldetails...</p>
+                {retryStatus && (
+                  <p className="text-xs text-gray-400 mt-2">{retryStatus}</p>
+                )}
+            </div>
+        );
+    }
+
+    if (error) {
+        // SOFT FAIL UI
+        return (
+            <div className="max-w-2xl mx-auto mt-10 bg-white rounded-2xl p-8 border border-red-100 shadow-lg text-center">
+                <div className="w-16 h-16 bg-red-50 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <AlertTriangle className="w-8 h-8 text-red-500" />
+                </div>
+                
+                <h2 className="text-xl font-bold text-gray-900 mb-2">Daten nicht verfügbar</h2>
+                <p className="text-gray-600 mb-6">
+                    {error}
+                </p>
+
+                <div className="flex flex-col sm:flex-row justify-center gap-4">
+                    <button 
+                        onClick={fetchDetails}
+                        className="inline-flex items-center justify-center px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors"
+                    >
+                        <RefreshCw className="w-4 h-4 mr-2" /> Erneut versuchen
+                    </button>
+                    
+                    <a 
+                        href={`https://fdc.nal.usda.gov/fdc-app.html#/food-details/${fdcId}/nutrients`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center justify-center px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+                    >
+                        <ExternalLink className="w-4 h-4 mr-2" /> Auf USDA ansehen
+                    </a>
+                </div>
+
+                <div className="mt-8 pt-6 border-t border-gray-100">
+                    <Link to="/ingredients" className="text-sm text-gray-500 hover:text-emerald-600 transition-colors">
+                        &larr; Zurück zur Suche
+                    </Link>
+                </div>
+            </div>
+        );
+    }
+
+    if (!food) {
+        // Fallback if loading=false, error=null, but food=null
+        return <div className="p-8 text-center text-gray-500">Keine Daten gefunden.</div>;
+    }
+
+    // Determine Energy Style safely
+    const hasSpecificEnergy = (food?.foodNutrients || []).some(n => {
+        const nid = n.nutrient?.id || n.id;
+        return nid === NUTRIENT_IDS.ENERGY_ATWATER_SPECIFIC;
+    });
+
+    return (
+        <div className="space-y-6 max-w-4xl mx-auto">
+            {/* Header Navigation */}
+            <Link to="/ingredients" className="inline-flex items-center text-gray-500 hover:text-gray-900 transition-colors">
+                <ArrowLeft className="w-4 h-4 mr-2" /> Back to Search
+            </Link>
+
+            {/* Developer Metrics Bar */}
+            {metrics && (
+                <div className="bg-gray-900 text-gray-300 p-4 rounded-xl shadow-lg flex justify-between items-center text-sm">
+                    <div className="flex items-center space-x-4">
+                        <div className="flex items-center space-x-2">
+                            <Gauge className="w-4 h-4 text-blue-400" />
+                            <span>Total: **{metrics.totalTime.toFixed(2)}ms**</span>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                            <Database className="w-4 h-4 text-emerald-400" />
+                            <span>Source: **{metrics.source}**</span>
+                        </div>
+                    </div>
+                    {renderDbStatus(dbStatus)}
+                </div>
+            )}
+
+            {/* Main Details Card */}
+            <div className="bg-white rounded-2xl p-8 border border-gray-200 shadow-xl">
+                <div className="flex items-center mb-4">
+                    <div className="w-12 h-12 bg-emerald-500 rounded-lg mr-4 flex items-center justify-center">
+                        <Utensils className="text-white w-6 h-6" />
+                    </div>
+                    <div>
+                        <p className="text-sm font-semibold text-gray-500">{food?.dataType || 'Unknown Type'} (ID: {food?.fdcId})</p>
+                        <h1 className="text-3xl font-bold text-gray-900">{food?.description || 'No Description'}</h1>
+                    </div>
+                </div>
+
+                <div className="text-xs text-gray-500 mt-2">
+                    <p>FDC Category: <span className="font-semibold text-gray-700">{food?.category || 'N/A'} ({food?.category_code || '-'})</span></p>
+                    <p className="mt-1">
+                        Dies ist der vollständige FDC-Eintrag.
+                    </p>
+                    <div className="text-xs text-emerald-600">
+                        Published: {food?.publicationDate || 'Unknown'}
+                    </div>
+                </div>
+            </div>
+
+            {/* Portions Card: SAFE MAPPING */}
+            {food?.portions && food.portions.length > 0 && (
+                <div className="bg-white rounded-2xl p-6 border border-gray-200 shadow-sm">
+                    <h3 className="font-bold text-gray-900 mb-3 flex items-center">
+                        <Tag className="w-4 h-4 mr-2 text-gray-400" /> Portions
+                    </h3>
+                    <ul className="space-y-2">
+                        {food.portions.map((portion, idx) => (
+                            <li key={portion.id || idx} className="text-sm text-gray-600 flex justify-between border-b border-gray-100 py-2 last:border-b-0">
+                                <span>{portion.amount} <span className="font-semibold">{portion.unitDescription}</span></span>
+                                <span className="text-gray-900 font-medium">{portion.gramWeight}g</span>
+                            </li>
+                        ))}
+                    </ul>
+                </div>
+            )}
+
+            {/* Macronutrient Summary (Kacheln) */}
+            <div className="grid grid-cols-4 gap-4">
+                <div className={`bg-white rounded-lg p-3 text-center border-2 ${hasSpecificEnergy ? 'border-purple-300' : 'border-gray-200'}`}>
+                    <div className="text-xs text-gray-500 mb-0.5 flex items-center justify-center">
+                        Energy <span className={`w-3 h-3 ml-1 ${hasSpecificEnergy ? 'text-purple-500' : 'text-gray-500'}`} title={hasSpecificEnergy ? 'Atwater Specific Calculation' : 'Standard Calculation'}><BarChart3 className="w-3 h-3" /></span>
+                    </div>
+                    <div className="text-lg font-bold text-gray-900">
+                        {renderCalorieValue(food)}
+                    </div>
+                </div>
+                <div className="bg-gray-50 rounded-lg p-2 text-center">
+                    <div className="text-xs text-gray-500 mb-0.5">Protein</div>
+                    <div className="font-bold text-gray-900">
+                        {renderValueOrDash(getNutrientValue(food, NUTRIENT_IDS.PROTEIN))}<span className="text-[10px] font-normal text-gray-500">g</span>
+                    </div>
+                </div>
+                <div className="bg-gray-50 rounded-lg p-2 text-center">
+                    <div className="text-xs text-gray-500 mb-0.5">Fat</div>
+                    <div className="font-bold text-gray-900">
+                        {renderValueOrDash(getNutrientValue(food, NUTRIENT_IDS.TOTAL_LIPID_FAT))}<span className="text-[10px] font-normal text-gray-500">g</span>
+                    </div>
+                </div>
+                <div className="bg-gray-50 rounded-lg p-2 text-center">
+                    <div className="text-xs text-gray-500 mb-0.5">Carbs</div>
+                    <div className="font-bold text-gray-900">
+                        {renderValueOrDash(getNutrientValue(food, NUTRIENT_IDS.CARBOHYDRATE_BY_DIFF))}<span className="text-[10px] font-normal text-gray-500">g</span>
+                    </div>
+                </div>
+            </div>
+
+            {/* Detailed Nutrient List */}
+            <div className="bg-white rounded-2xl p-6 border border-gray-200 shadow-sm">
+                <h3 className="font-bold text-gray-900 mb-3 flex items-center">
+                    <BarChart3 className="w-4 h-4 mr-2 text-gray-400" /> Detaillierte Nährwertangaben (pro 100g)
+                </h3>
+                <div className="overflow-x-auto">
+                    <table className="min-w-full divide-y divide-gray-200">
+                        <thead className="bg-gray-50">
+                            <tr>
+                                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                    Nährstoff
+                                </th>
+                                <th scope="col" className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                    Wert
+                                </th>
+                            </tr>
+                        </thead>
+                        <tbody className="bg-white divide-y divide-gray-200">
+                            {sortedNutrients.map((info, index) => {
+                                const displayName = info.name;
+                                const isHighlight = info.id && !!NUTRIENT_DISPLAY_NAMES[info.id];
+                                const val = typeof info.amount === 'number' ? info.amount : info.value;
+                                const id = info.nutrient?.id || info.nutrientId;
+                                
+                                let icon = null;
+                                let rowClass = isHighlight ? 'font-medium bg-emerald-50/50' : 'text-gray-600';
+
+                                if (id === NUTRIENT_IDS.ENERGY_ATWATER_SPECIFIC) {
+                                    icon = <FlaskConical className="w-3 h-3 ml-2 fill-purple-100 text-purple-500" />;
+                                    rowClass = 'font-bold bg-purple-50/50 text-purple-800';
+                                } else if (id === NUTRIENT_IDS.ENERGY_ATWATER_GENERAL) {
+                                    icon = <Calculator className="w-3 h-3 ml-2 fill-blue-100 text-blue-500" />;
+                                    rowClass = 'font-bold bg-blue-50/50 text-blue-800';
+                                } else if (id === NUTRIENT_IDS.ENERGY_KCAL) {
+                                    icon = <BarChart3 className="w-3 h-3 ml-2 fill-gray-100 text-gray-500" />;
+                                }
+
+                                return (
+                                    <tr key={info.id || index} className={rowClass}>
+                                        <td className="px-6 py-3 whitespace-nowrap text-sm flex items-center">
+                                            {displayName}
+                                            {icon}
+                                        </td>
+                                        <td className="px-6 py-3 whitespace-nowrap text-sm text-right">
+                                            <span className="font-mono text-gray-900">{renderValueOrDash(val)}</span>
+                                            <span className="text-[10px] font-normal text-gray-500 ml-1">{info.unitName}</span>
+                                        </td>
+                                    </tr>
+                                );
+                            })}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    );
 };
