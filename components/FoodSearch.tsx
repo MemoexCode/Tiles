@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Search, Loader2, Info, Database, ChevronRight, Calculator, FlaskConical } from 'lucide-react';
 import { usdaService } from '../services/usdaService';
 import { SearchResultFood, DataType } from '../types';
@@ -11,65 +11,52 @@ const STORAGE_KEY_SEARCH = 'TILES_SEARCH_STATE';
  * FoodSearch Component
  * 
  * Features:
- * - Debounced Auto-Search (300ms)
- * - Manual Search Override
+ * - Manual Search Only (Enter key or Button)
+ * - Persistent Results across navigation
  * - Retry UI Integration
  * - Soft Failure States
  */
 export const FoodSearch: React.FC = () => {
-  const [query, setQuery] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
-  const [results, setResults] = useState<SearchResultFood[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  const [hasSearched, setHasSearched] = useState(false);
-  const [retryStatus, setRetryStatus] = useState("");
-  
-  // Ref to track the last searched query to prevent duplicates/race conditions
-  const lastSearchTerm = useRef<string>('');
-  
-  // 1. Restore State on Mount
-  useEffect(() => {
+  // Initialize state from session storage to persist across navigation
+  const getInitialState = () => {
     const savedState = sessionStorage.getItem(STORAGE_KEY_SEARCH);
     if (savedState) {
       try {
-        const parsed = JSON.parse(savedState);
-        setQuery(parsed.query || '');
-        setResults(parsed.results || []);
-        setHasSearched(parsed.hasSearched || false);
-        // Sync ref so auto-search doesn't re-trigger immediately if query matches
-        lastSearchTerm.current = parsed.query || '';
+        return JSON.parse(savedState);
       } catch (e) {
-        console.error('Failed to restore search state', e);
+        console.error('Failed to parse search state', e);
       }
     }
-  }, []);
+    return { query: '', results: [], hasSearched: false };
+  };
 
-  // Shared Search Logic
+  const initialState = getInitialState();
+
+  const [query, setQuery] = useState<string>(initialState.query);
+  const [cachedResults, setCachedResults] = useState<SearchResultFood[]>(initialState.results);
+  const [hasSearched, setHasSearched] = useState<boolean>(initialState.hasSearched);
+  
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [retryStatus, setRetryStatus] = useState("");
+  
   const executeSearch = async (searchTerm: string) => {
-    if (!searchTerm.trim()) {
-       setResults([]);
-       setHasSearched(false);
-       return;
-    }
+    if (!searchTerm.trim()) return;
 
     setIsLoading(true);
     setError(null);
     setHasSearched(true);
     setRetryStatus("");
     
-    // Update ref to current attempt
-    lastSearchTerm.current = searchTerm;
-
     try {
       const response = await usdaService.searchFoods(searchTerm);
       
-      // FIX: Safeguard against undefined foods array
       const foodResults = response?.foods || [];
-      setResults(foodResults);
+      setCachedResults(foodResults);
       
       console.log("[FoodSearch] Search results:", foodResults);
 
-      // Save State
+      // Persist to storage
       sessionStorage.setItem(STORAGE_KEY_SEARCH, JSON.stringify({
         query: searchTerm,
         results: foodResults,
@@ -78,32 +65,28 @@ export const FoodSearch: React.FC = () => {
       
     } catch (err) {
       console.error("[FoodSearch] Search error:", err);
-      // Soft fail: Set error state but ensure results are cleared or handled
       setError(err instanceof Error ? err.message : 'An unexpected error occurred');
-      setResults([]);
+      // We do not clear cachedResults on error to allow user to see previous state if desired,
+      // or we can clear it if that's preferred. Given "Persist" instructions, we keep them unless a new valid search replaces them.
+      // However, if the user explicitly searched and it failed, showing old results might be confusing.
+      // But the prompt says "Results persist until: The user presses Enter with a new search term."
+      // We'll reset results only if the search was intended to replace them.
+      setCachedResults([]);
     } finally {
       setIsLoading(false);
       setRetryStatus("");
     }
   };
 
-  // 2. Debounced Auto-Search
-  useEffect(() => {
-    const delayDebounceFn = setTimeout(() => {
-      // Only auto-search if query has content, is different from last search, or if we haven't searched yet but have query (restoration edge case handled by mount effect)
-      if (query.trim() && query !== lastSearchTerm.current) {
-        executeSearch(query);
-      }
-    }, 300); // 300ms delay
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault(); 
+      executeSearch(query);
+    }
+  };
 
-    return () => clearTimeout(delayDebounceFn);
-  }, [query]);
-
-  // 3. Manual Search Handler (Enter key / Button)
-  const handleSearch = (e: React.FormEvent) => {
+  const handleSearchClick = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!query.trim()) return;
-    // Force search even if it matches last term (user explicit retry)
     executeSearch(query);
   };
 
@@ -153,11 +136,12 @@ export const FoodSearch: React.FC = () => {
 
       {/* Search Input Card */}
       <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
-        <form onSubmit={handleSearch} className="relative">
+        <form onSubmit={handleSearchClick} className="relative">
           <input
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={handleKeyDown}
             placeholder="Search e.g., 'Avocado', 'Raw Spinach'..."
             className="w-full pl-12 pr-4 py-4 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white transition-all text-lg"
           />
@@ -194,7 +178,7 @@ export const FoodSearch: React.FC = () => {
 
       {/* Results Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {results.map((food) => (
+        {cachedResults.map((food) => (
           <div 
             key={food.fdcId} 
             className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden hover:shadow-md transition-all group flex flex-col h-full"
@@ -252,7 +236,7 @@ export const FoodSearch: React.FC = () => {
       </div>
 
       {/* Empty State */}
-      {!isLoading && hasSearched && results.length === 0 && !error && (
+      {!isLoading && hasSearched && cachedResults.length === 0 && !error && (
         <div className="text-center py-20">
           <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
             <Search className="w-8 h-8 text-gray-400" />
@@ -263,7 +247,7 @@ export const FoodSearch: React.FC = () => {
       )}
       
       {/* Loading Skeleton during active search */}
-      {isLoading && results.length === 0 && (
+      {isLoading && cachedResults.length === 0 && (
          <div className="text-center py-20 opacity-50">
            <Loader2 className="w-10 h-10 animate-spin mx-auto text-emerald-500 mb-4" />
            <p className="text-gray-500">Searching database...</p>

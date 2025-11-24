@@ -78,6 +78,15 @@ class USDAService {
       throw new Error(`USDA Details Error: Status ${r.status}`);
     }
 
+    await supabase
+      .from("usda_food_raw")
+      .upsert({
+        fdc_id: r.data.fdcId,
+        data_type: r.data.dataType,
+        raw_json: r.data,
+        fetched_at: new Date().toISOString()
+      });
+
     return r.data;
   }
 }
