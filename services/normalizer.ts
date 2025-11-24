@@ -56,10 +56,10 @@ const generateVisualParent = (description: string): string => {
 
 /**
  * Normalizes a single portion entry.
- * Prioritizes portionDescription -> measureUnit.name -> 'Einheit'
+ * Prioritizes portionDescription -> modifier (SR Legacy) -> measureUnit.name -> 'Einheit'
  */
 const normalizeFoodPortion = (p: FoodPortion): NormalizedFoodPortion => {
-  const unitDescription = p.portionDescription || p.measureUnit?.name || 'Einheit';
+  const unitDescription = p.portionDescription || p.modifier || p.measureUnit?.name || 'Einheit';
   
   return {
     id: p.id,
