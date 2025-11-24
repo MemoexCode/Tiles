@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { Search, Loader2, Info, Database, ChevronRight, Calculator, FlaskConical } from 'lucide-react';
 import { usdaService } from '../services/usdaService';
@@ -8,22 +7,15 @@ import { Link } from 'react-router-dom';
 
 const STORAGE_KEY_SEARCH = 'TILES_SEARCH_STATE';
 
-/**
- * FoodSearch Component
- * 
- * INTERACTION NOTE:
- * This component relies on usdaService which communicates with the 'usda-proxy' Edge Function.
- * The proxy always returns HTTP 200. Error states shown here reflect the 'success' field 
- * from the proxy response parsed by the service.
- */
 export const FoodSearch: React.FC = () => {
   const [query, setQuery] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [results, setResults] = useState<SearchResultFood[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [hasSearched, setHasSearched] = useState(false);
+  const [retryStatus, setRetryStatus] = useState("");
 
-  // 1. Restore State on Mount (Gedächtnis wiederherstellen)
+  // Restore State on Mount
   useEffect(() => {
     const savedState = sessionStorage.getItem(STORAGE_KEY_SEARCH);
     if (savedState) {
@@ -38,56 +30,73 @@ export const FoodSearch: React.FC = () => {
     }
   }, []);
 
-  const handleSearch = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!query.trim()) return;
+  // Centralized Search Execution
+  const executeSearch = async (searchTerm: string) => {
+    if (!searchTerm.trim()) return;
 
     setIsLoading(true);
     setError(null);
     setHasSearched(true);
-    setResults([]); // Clear previous results
-
+    setRetryStatus("");
+    
     try {
-      const response = await usdaService.searchFoods(query);
-      // FIX: Safeguard against undefined foods array
+      const response = await usdaService.searchFoods(searchTerm, (attempt) => {
+        setRetryStatus(`Retry ${attempt}/3…`);
+      });
+      
+      // Safeguard against undefined response.foods
       const foodResults = response?.foods || [];
       setResults(foodResults);
       
       console.log("[FoodSearch] Search results:", foodResults);
 
-      // 2. Save State (Gedächtnis speichern)
       sessionStorage.setItem(STORAGE_KEY_SEARCH, JSON.stringify({
-        query,
+        query: searchTerm,
         results: foodResults,
         hasSearched: true
       }));
       
     } catch (err) {
       console.error("[FoodSearch] Search error:", err);
+      // Soft fail: Just show error, clear results to avoid misleading stale data
       setError(err instanceof Error ? err.message : 'An unexpected error occurred');
-      setResults([]);
+      setResults([]); 
     } finally {
       setIsLoading(false);
+      setRetryStatus("");
     }
   };
 
-  // 3. Fix Nutrient Logic: Return number or null (not string '-') to allow chaining
+  // Debounced Search Effect (300ms)
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      // Only execute if query is valid
+      if (query.trim()) {
+        executeSearch(query);
+      }
+    }, 300);
+
+    return () => clearTimeout(timer);
+  }, [query]);
+
+  // Handle Manual Submit (Immediate)
+  const handleManualSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (query.trim()) {
+       executeSearch(query);
+    }
+  };
+
   const getNutrientValue = (food: SearchResultFood, nutrientId: number): number | null => {
-    // Safeguard: Ensure foodNutrients exists
     if (!food.foodNutrients) return null;
-    
     const nutrient = food.foodNutrients.find(n => n.nutrientId === nutrientId);
-    // Check for null/undefined explicitly because 0 is a valid number
     if (nutrient && (typeof nutrient.value === 'number')) {
       return Math.round(nutrient.value);
     }
     return null;
   };
 
-  // Helper to render the value or a dash if absolutely nothing found
   const renderCalorieValue = (food: SearchResultFood) => {
-    // Priorität: 1008 (Standard) -> 2048 (Specific) -> 2047 (General)
-    
     const valStandard = getNutrientValue(food, NUTRIENT_IDS.ENERGY_KCAL);
     if (valStandard !== null) return <span>{valStandard}</span>;
 
@@ -123,7 +132,7 @@ export const FoodSearch: React.FC = () => {
 
       {/* Search Input Card */}
       <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
-        <form onSubmit={handleSearch} className="relative">
+        <form onSubmit={handleManualSubmit} className="relative">
           <input
             type="text"
             value={query}
@@ -132,27 +141,38 @@ export const FoodSearch: React.FC = () => {
             className="w-full pl-12 pr-4 py-4 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white transition-all text-lg"
           />
           <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 text-gray-400 w-6 h-6" />
-          <button
-            type="submit"
-            disabled={isLoading || !query.trim()}
-            className="absolute right-3 top-1/2 transform -translate-y-1/2 bg-emerald-600 hover:bg-emerald-700 text-white px-6 py-2 rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {isLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Search'}
-          </button>
+          
+          <div className="absolute right-3 top-1/2 transform -translate-y-1/2 flex items-center gap-3">
+             {isLoading ? (
+               <div className="bg-gray-100 px-4 py-2 rounded-lg flex items-center">
+                 <Loader2 className="w-5 h-5 animate-spin text-emerald-600" />
+                 <span className="ml-2 text-sm text-gray-500 font-medium">Searching...</span>
+               </div>
+             ) : (
+               <button
+                type="submit"
+                disabled={!query.trim()}
+                className="bg-emerald-600 hover:bg-emerald-700 text-white px-6 py-2 rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Search
+              </button>
+             )}
+          </div>
         </form>
-        <div className="mt-3 flex items-center text-xs text-gray-400 space-x-4">
+        <div className="mt-3 flex items-center justify-between text-xs text-gray-400">
           <span className="flex items-center"><Database className="w-3 h-3 mr-1" /> Sources: Foundation, SR Legacy</span>
+          {retryStatus && (
+            <span className="text-orange-500 font-medium animate-pulse">{retryStatus}</span>
+          )}
         </div>
       </div>
 
-      {/* Error State */}
+      {/* Soft Fail / Error State */}
       {error && (
-        <div className="bg-red-50 border border-red-200 text-red-700 p-4 rounded-xl flex items-start">
-          <Info className="w-5 h-5 mr-3 mt-0.5 flex-shrink-0" />
+        <div className="bg-orange-50 border border-orange-200 text-orange-800 p-4 rounded-xl flex items-center shadow-sm animate-fade-in">
+          <Info className="w-5 h-5 mr-3 flex-shrink-0 text-orange-500" />
           <div className="flex-1">
-            <h3 className="font-medium">Search Failed</h3>
-            <p className="text-sm mt-1">{error}</p>
-            <p className="text-xs mt-2 text-red-500">Check if the Edge Function is deployed correctly in Supabase.</p>
+            <span className="font-medium">Search encountered an issue:</span> {error}
           </div>
         </div>
       )}
@@ -181,7 +201,6 @@ export const FoodSearch: React.FC = () => {
               </h3>
 
               <div className="grid grid-cols-3 gap-2 mt-6">
-                {/* Quick Stats */}
                 <div className="bg-gray-50 rounded-lg p-2 text-center">
                    <div className="text-xs text-gray-500 mb-0.5">Calories</div>
                    <div className="font-bold text-gray-900">
@@ -205,7 +224,6 @@ export const FoodSearch: React.FC = () => {
 
             <div className="p-4 border-t border-gray-100 bg-gray-50 flex justify-between items-center">
               <span className="text-xs text-gray-500">Per 100g</span>
-              {/* Das ist der entscheidende Link zur Detailseite */}
               <Link 
                 to={`/food/${food.fdcId}`} 
                 className="text-sm font-medium text-emerald-600 flex items-center hover:text-emerald-700"
