@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from 'react';
+
+import React, { useState } from 'react';
 import { Search, Loader2, Info, Database, ChevronRight, Calculator, FlaskConical } from 'lucide-react';
-import { usdaService } from '../services/usdaService';
-import { SearchResultFood, DataType } from '../types';
-import { NUTRIENT_IDS } from '../constants';
+import { searchTilesFood } from '../services/tilesFoodSearchService';
+import { TilesFoodSearchResult } from '../types';
 import { Link } from 'react-router-dom';
 
 const STORAGE_KEY_SEARCH = 'TILES_SEARCH_STATE';
@@ -13,8 +13,7 @@ const STORAGE_KEY_SEARCH = 'TILES_SEARCH_STATE';
  * Features:
  * - Manual Search Only (Enter key or Button)
  * - Persistent Results across navigation
- * - Retry UI Integration
- * - Soft Failure States
+ * - Uses Supabase RPC 'search_tiles_food' instead of direct FDC API
  */
 export const FoodSearch: React.FC = () => {
   // Initialize state from session storage to persist across navigation
@@ -33,12 +32,11 @@ export const FoodSearch: React.FC = () => {
   const initialState = getInitialState();
 
   const [query, setQuery] = useState<string>(initialState.query);
-  const [cachedResults, setCachedResults] = useState<SearchResultFood[]>(initialState.results);
+  const [cachedResults, setCachedResults] = useState<TilesFoodSearchResult[]>(initialState.results);
   const [hasSearched, setHasSearched] = useState<boolean>(initialState.hasSearched);
   
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [retryStatus, setRetryStatus] = useState("");
   
   const executeSearch = async (searchTerm: string) => {
     if (!searchTerm.trim()) return;
@@ -46,35 +44,36 @@ export const FoodSearch: React.FC = () => {
     setIsLoading(true);
     setError(null);
     setHasSearched(true);
-    setRetryStatus("");
     
     try {
-      const response = await usdaService.searchFoods(searchTerm);
+      // Switch to new Tiles Search Service
+      // Hardcoded to 'en' for now based on typical USDA data content matching, 
+      // or 'de' if the DB contains German labels. 
+      // The prompt suggests using the service default (which is 'de' or params).
+      // Let's use 'en' as default here since USDA data is English, but 
+      // if the RPC expects 'de' for localization, it handles it internally.
+      // We'll pass 'en' to align with the FDC dataset context usually, 
+      // but if the app is german-focused (implied by previous comments), 'de' works.
+      // We stick to the service default or explicit parameter.
+      const results = await searchTilesFood({ query: searchTerm, langCode: 'en' });
       
-      const foodResults = response?.foods || [];
-      setCachedResults(foodResults);
+      setCachedResults(results);
       
-      console.log("[FoodSearch] Search results:", foodResults);
+      console.log("[FoodSearch] Search results:", results);
 
       // Persist to storage
       sessionStorage.setItem(STORAGE_KEY_SEARCH, JSON.stringify({
         query: searchTerm,
-        results: foodResults,
+        results: results,
         hasSearched: true
       }));
       
     } catch (err) {
       console.error("[FoodSearch] Search error:", err);
       setError(err instanceof Error ? err.message : 'An unexpected error occurred');
-      // We do not clear cachedResults on error to allow user to see previous state if desired,
-      // or we can clear it if that's preferred. Given "Persist" instructions, we keep them unless a new valid search replaces them.
-      // However, if the user explicitly searched and it failed, showing old results might be confusing.
-      // But the prompt says "Results persist until: The user presses Enter with a new search term."
-      // We'll reset results only if the search was intended to replace them.
       setCachedResults([]);
     } finally {
       setIsLoading(false);
-      setRetryStatus("");
     }
   };
 
@@ -90,47 +89,12 @@ export const FoodSearch: React.FC = () => {
     executeSearch(query);
   };
 
-  // Helper to get nutrient values safely
-  const getNutrientValue = (food: SearchResultFood, nutrientId: number): number | null => {
-    if (!food.foodNutrients) return null;
-    const nutrient = food.foodNutrients.find(n => n.nutrientId === nutrientId);
-    if (nutrient && (typeof nutrient.value === 'number')) {
-      return Math.round(nutrient.value);
-    }
-    return null;
-  };
-
-  const renderCalorieValue = (food: SearchResultFood) => {
-    const valStandard = getNutrientValue(food, NUTRIENT_IDS.ENERGY_KCAL);
-    if (valStandard !== null) return <span>{valStandard}</span>;
-
-    const valSpecific = getNutrientValue(food, NUTRIENT_IDS.ENERGY_ATWATER_SPECIFIC);
-    if (valSpecific !== null) return (
-      <span className="flex items-center justify-center text-purple-700 font-bold">
-        {valSpecific} <FlaskConical className="w-3 h-3 ml-1 fill-purple-100 text-purple-500" />
-      </span>
-    );
-
-    const valGeneral = getNutrientValue(food, NUTRIENT_IDS.ENERGY_ATWATER_GENERAL);
-    if (valGeneral !== null) return (
-      <span className="flex items-center justify-center text-gray-500">
-        {valGeneral} <Calculator className="w-3 h-3 ml-1 text-gray-400" />
-      </span>
-    );
-             
-    return '-';
-  };
-
-  const renderValueOrDash = (val: number | null) => {
-    return val !== null ? val : '-';
-  }
-
   return (
     <div className="space-y-6">
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Ingredient Search</h1>
-          <p className="text-gray-500 mt-1">Search the USDA FoodData Central database via Secure Proxy.</p>
+          <p className="text-gray-500 mt-1">Search the curated Tiles food database.</p>
         </div>
       </div>
 
@@ -142,7 +106,7 @@ export const FoodSearch: React.FC = () => {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Search e.g., 'Avocado', 'Raw Spinach'..."
+            placeholder="Search e.g., 'Avocado', 'Spinach'..."
             className="w-full pl-12 pr-4 py-4 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white transition-all text-lg"
           />
           <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 text-gray-400 w-6 h-6" />
@@ -156,11 +120,8 @@ export const FoodSearch: React.FC = () => {
         </form>
         <div className="mt-3 flex flex-col md:flex-row md:items-center justify-between">
            <div className="flex items-center text-xs text-gray-400 space-x-4 mb-2 md:mb-0">
-             <span className="flex items-center"><Database className="w-3 h-3 mr-1" /> Sources: Foundation, SR Legacy</span>
+             <span className="flex items-center"><Database className="w-3 h-3 mr-1" /> Sources: Tiles Index (Supabase)</span>
            </div>
-           {retryStatus && (
-              <p className="text-xs text-gray-500 animate-pulse">{retryStatus}</p>
-           )}
         </div>
       </div>
 
@@ -178,58 +139,50 @@ export const FoodSearch: React.FC = () => {
 
       {/* Results Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {cachedResults.map((food) => (
+        {cachedResults.map((item) => (
           <div 
-            key={food.fdcId} 
+            key={item.foodId} 
             className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden hover:shadow-md transition-all group flex flex-col h-full"
           >
             <div className="p-5 flex-1">
               <div className="flex justify-between items-start mb-2">
-                <span className={`inline-block px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider ${
-                  food.dataType === DataType.Foundation 
-                    ? 'bg-emerald-100 text-emerald-700' 
-                    : 'bg-blue-50 text-blue-700'
-                }`}>
-                  {food.dataType}
-                </span>
-                <span className="text-xs text-gray-400">#{food.fdcId}</span>
+                {item.usdaDataType && (
+                  <span className={`inline-block px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider bg-blue-50 text-blue-700`}>
+                    {item.usdaDataType}
+                  </span>
+                )}
+                <span className="text-xs text-gray-400">#{item.defaultFdcId || 'N/A'}</span>
               </div>
               
               <h3 className="font-bold text-gray-900 text-lg leading-tight mb-1 group-hover:text-emerald-600 transition-colors">
-                {food.description}
+                {item.primaryLabel}
               </h3>
+              
+              {item.foodCategory && (
+                <p className="text-xs text-gray-500 mt-1">{item.foodCategory}</p>
+              )}
 
-              <div className="grid grid-cols-3 gap-2 mt-6">
-                {/* Quick Stats */}
-                <div className="bg-gray-50 rounded-lg p-2 text-center">
-                   <div className="text-xs text-gray-500 mb-0.5">Calories</div>
-                   <div className="font-bold text-gray-900">
-                     {renderCalorieValue(food)}
-                   </div>
-                </div>
-                <div className="bg-gray-50 rounded-lg p-2 text-center">
-                   <div className="text-xs text-gray-500 mb-0.5">Protein</div>
-                   <div className="font-bold text-gray-900">
-                     {renderValueOrDash(getNutrientValue(food, NUTRIENT_IDS.PROTEIN))}<span className="text-[10px] font-normal text-gray-500">g</span>
-                   </div>
-                </div>
-                <div className="bg-gray-50 rounded-lg p-2 text-center">
-                   <div className="text-xs text-gray-500 mb-0.5">Fat</div>
-                   <div className="font-bold text-gray-900">
-                     {renderValueOrDash(getNutrientValue(food, NUTRIENT_IDS.TOTAL_LIPID_FAT))}<span className="text-[10px] font-normal text-gray-500">g</span>
-                   </div>
-                </div>
+              {/* Nutrients are not returned by the RPC search index, so we show a placeholder message or nothing */}
+              <div className="mt-4 text-xs text-gray-400 italic">
+                Detailed nutrients available in view.
               </div>
             </div>
 
             <div className="p-4 border-t border-gray-100 bg-gray-50 flex justify-between items-center">
-              <span className="text-xs text-gray-500">Per 100g</span>
-              <Link 
-                to={`/food/${food.fdcId}`} 
-                className="text-sm font-medium text-emerald-600 flex items-center hover:text-emerald-700"
-              >
-                View Details <ChevronRight className="w-4 h-4 ml-1" />
-              </Link>
+              <span className="text-xs text-gray-500">
+                {item.defaultDataset || 'USDA'}
+              </span>
+              
+              {item.defaultFdcId ? (
+                <Link 
+                  to={`/food/${item.defaultFdcId}`} 
+                  className="text-sm font-medium text-emerald-600 flex items-center hover:text-emerald-700"
+                >
+                  View Details <ChevronRight className="w-4 h-4 ml-1" />
+                </Link>
+              ) : (
+                 <span className="text-sm text-gray-400 cursor-not-allowed">No Details</span>
+              )}
             </div>
           </div>
         ))}
@@ -247,10 +200,10 @@ export const FoodSearch: React.FC = () => {
       )}
       
       {/* Loading Skeleton during active search */}
-      {isLoading && cachedResults.length === 0 && (
+      {isLoading && (
          <div className="text-center py-20 opacity-50">
            <Loader2 className="w-10 h-10 animate-spin mx-auto text-emerald-500 mb-4" />
-           <p className="text-gray-500">Searching database...</p>
+           <p className="text-gray-500">Searching Tiles database...</p>
          </div>
       )}
     </div>

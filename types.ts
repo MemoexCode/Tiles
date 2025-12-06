@@ -111,7 +111,7 @@ export interface NormalizedFoodNutrient extends FoodNutrient {
   unitName?: string;
 }
 
-// Search Result Item (Abridged)
+// Search Result Item (Abridged) - Legacy FDC Search
 export interface SearchResultFood {
   fdcId: number;
   description: string;
@@ -136,6 +136,25 @@ export interface FDCSearchResponse {
     sortOrder: string;
   };
   foods: SearchResultFood[];
+}
+
+// --- Tiles Supabase Search Types ---
+
+export interface TilesFoodSearchResult {
+  foodId: string; // UUID
+  canonicalKey: string;
+  canonicalName: string;
+  visualGroupKey: string | null;
+  visualParentId: string | null;
+  defaultFdcId: number | null;
+  defaultDataset: string | null;
+  tags: any | null;
+  langCode: string;
+  primaryLabel: string;
+  synonyms: string[];
+  score: number;
+  foodCategory: string | null;
+  usdaDataType: string | null;
 }
 
 // --- Database Types (Phase 1: Persistence Layer) ---
