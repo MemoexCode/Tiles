@@ -1,12 +1,13 @@
 import React, { useEffect, useState, useMemo } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useLocation } from 'react-router-dom';
 import { ArrowLeft, Tag, BarChart3, FlaskConical, Gauge, Calculator, Utensils, Zap, Database, AlertTriangle, ExternalLink, RefreshCw } from 'lucide-react';
 
 import { getNutrientValue, getNutrientInfo, renderValueOrDash } from '../services/nutrientUtils';
 import { usdaService } from '../services/usdaService';
+import { getTilesFoodDetails } from '../services/tilesFoodDetailsService';
+import { normalizeTilesFoodDetailsRow, normalizeFoodItem } from '../services/normalizer';
 import { NormalizedFood, NormalizedFoodNutrient, DatabaseStatus } from '../types';
 import { NUTRIENT_IDS, NUTRIENT_DISPLAY_NAMES, NUTRIENT_ORDER } from '../constants';
-import { normalizeFoodItem } from '../services/normalizer';
 
 // Helper for sorting based on the constants.ts order
 const sortNutrients = (a: NormalizedFoodNutrient, b: NormalizedFoodNutrient): number => {
@@ -44,11 +45,6 @@ const sortNutrients = (a: NormalizedFoodNutrient, b: NormalizedFoodNutrient): nu
 
 // --- Sub-Components & Helpers ---
 
-/**
- * Renders the primary calorie value, prioritizing the most accurate Atwater method.
- * Also adds the icon based on the calculation method.
- * SAFE: Handles null/undefined food object.
- */
 const renderCalorieValue = (food: NormalizedFood | null) => {
     if (!food) return renderValueOrDash(null);
 
@@ -72,14 +68,10 @@ const renderCalorieValue = (food: NormalizedFood | null) => {
         </span>
     );
 
-    // Fallback if no energy value is found
     return renderValueOrDash(null);
 };
 
 
-/**
- * Renders the status indicator for the database connection.
- */
 const renderDbStatus = (dbStatus: DatabaseStatus) => {
     let icon;
     let colorClass;
@@ -117,17 +109,14 @@ const renderDbStatus = (dbStatus: DatabaseStatus) => {
 
 // --- Main Component ---
 
-/**
- * FoodDetails
- * 
- * Displays detailed nutrient info.
- * Handles errors by catching exceptions thrown by usdaService.
- * Includes Retry UI and soft-fail states.
- */
 export const FoodDetails: React.FC = () => {
     const { id } = useParams<{ id: string }>();
-    const fdcId = Number(id);
+    const routeId = id ?? '';
+    const location = useLocation();
     
+    // Fallback data from Search State
+    const fallbackFdcId = (location.state as any)?.fallbackFdcId ?? null;
+
     // Metrics state
     const [dbStatus, setDbStatus] = useState<DatabaseStatus>('loading');
     const [metrics, setMetrics] = useState<{ totalTime: number; netTime: number; source: string } | null>(null);
@@ -151,8 +140,8 @@ export const FoodDetails: React.FC = () => {
     }, []);
 
     const fetchDetails = async () => {
-        if (!fdcId) {
-            setError('Keine FDC ID angegeben.');
+        if (!routeId) {
+            setError('No Food ID provided.');
             setLoading(false);
             return;
         }
@@ -162,35 +151,65 @@ export const FoodDetails: React.FC = () => {
         setRetryStatus("");
         const start = performance.now();
         
+        // Detect if the ID is a UUID (Tiles ID)
+        const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(routeId);
+
         try {
-            // 1. Fetch raw data from cache or API via the service
-            // The service now handles normalization internally.
-            const data = await usdaService.getFoodDetails(fdcId);
+            if (isUuid) {
+                // PRIMARY PATH: Fetch from Tiles DB via RPC
+                try {
+                    console.log(`[FoodDetails] Attempting RPC fetch for UUID: ${routeId}`);
+                    const rpcRow = await getTilesFoodDetails(routeId, 'de');
+                    
+                    if (rpcRow) {
+                        const normalized = normalizeTilesFoodDetailsRow(rpcRow);
+                        setFood(normalized);
+                        
+                        const end = performance.now();
+                        setMetrics({
+                            totalTime: end - start,
+                            netTime: 0, 
+                            source: 'Supabase RPC'
+                        });
+                        setLoading(false);
+                        return; // Success, exit
+                    } else {
+                        console.warn("[FoodDetails] RPC returned no data for UUID. Attempting fallback.");
+                    }
+                } catch (rpcErr) {
+                    console.warn("[FoodDetails] RPC Error:", rpcErr);
+                    // Fall through to fallback logic
+                }
+            }
 
-            const end = performance.now();
+            // CRITICAL FALLBACK PATH
+            // Determine FDC ID to use
+            let fdcIdCandidate: number | null = null;
             
-            console.log("[FoodDetails] Loaded details:", data);
+            if (!isUuid && !isNaN(Number(routeId))) {
+                // Legacy URL with FDC ID directly
+                fdcIdCandidate = Number(routeId);
+            } else if (fallbackFdcId) {
+                // Provided via Router State
+                fdcIdCandidate = Number(fallbackFdcId);
+            }
 
-            // Simple metric estimation
-            setMetrics({
-                totalTime: end - start,
-                netTime: 0, 
-                source: 'Service'
-            });
+            if (!fdcIdCandidate) {
+                throw new Error("Food Details unavailable: No local record found and no fallback FDC ID provided.");
+            }
 
-            // Data is already normalized by the service logic update in step 1
-            // But we cast it here to be safe or re-normalize if the service returned raw
-            // Since the updated service calls normalizeFoodItem, 'data' is FDCFoodItem but we want NormalizedFood.
-            // Wait - the service signature says it returns FDCFoodItem, but the prompt's service update integrated normalization.
-            // Let's assume the service returns the FDCFoodItem and we normalize it here to be safe,
-            // OR if the service returns NormalizedFood, we use it. 
-            // The prompt says "integrated normalizeFoodItem directly into getFoodDetails".
-            // However, types.ts defines getFoodDetails returning FDCFoodItem. 
-            // To be absolutely safe against type mismatches or "undefined" errors:
-            
+            console.log(`[FoodDetails] Fallback: Fetching from FDC API (ID: ${fdcIdCandidate})`);
+            const data = await usdaService.getFoodDetails(fdcIdCandidate);
             const normalizedData = normalizeFoodItem(data);
             setFood(normalizedData);
             
+            const end = performance.now();
+            setMetrics({
+                totalTime: end - start,
+                netTime: 0, 
+                source: 'FDC Fallback'
+            });
+
         } catch (err: any) {
             console.error("[FoodDetails] Detail error:", err);
             setError(err.message || 'Failed to load food details');
@@ -202,10 +221,9 @@ export const FoodDetails: React.FC = () => {
 
     useEffect(() => {
         fetchDetails();
-    }, [fdcId]);
+    }, [routeId]);
 
     const sortedNutrients = useMemo(() => {
-        // SAFE GUARD: food or foodNutrients might be null/undefined
         if (!food?.foodNutrients) return [];
         
         return [...food.foodNutrients]
@@ -240,7 +258,6 @@ export const FoodDetails: React.FC = () => {
     }
 
     if (error) {
-        // SOFT FAIL UI
         return (
             <div className="max-w-2xl mx-auto mt-10 bg-white rounded-2xl p-8 border border-red-100 shadow-lg text-center">
                 <div className="w-16 h-16 bg-red-50 rounded-full flex items-center justify-center mx-auto mb-4">
@@ -248,9 +265,7 @@ export const FoodDetails: React.FC = () => {
                 </div>
                 
                 <h2 className="text-xl font-bold text-gray-900 mb-2">Daten nicht verfügbar</h2>
-                <p className="text-gray-600 mb-6">
-                    {error}
-                </p>
+                <p className="text-gray-600 mb-6">{error}</p>
 
                 <div className="flex flex-col sm:flex-row justify-center gap-4">
                     <button 
@@ -260,14 +275,16 @@ export const FoodDetails: React.FC = () => {
                         <RefreshCw className="w-4 h-4 mr-2" /> Erneut versuchen
                     </button>
                     
-                    <a 
-                        href={`https://fdc.nal.usda.gov/fdc-app.html#/food-details/${fdcId}/nutrients`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center justify-center px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
-                    >
-                        <ExternalLink className="w-4 h-4 mr-2" /> Auf USDA ansehen
-                    </a>
+                    {fallbackFdcId && (
+                        <a 
+                            href={`https://fdc.nal.usda.gov/fdc-app.html#/food-details/${fallbackFdcId}/nutrients`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center justify-center px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+                        >
+                            <ExternalLink className="w-4 h-4 mr-2" /> Auf USDA ansehen
+                        </a>
+                    )}
                 </div>
 
                 <div className="mt-8 pt-6 border-t border-gray-100">
@@ -280,13 +297,11 @@ export const FoodDetails: React.FC = () => {
     }
 
     if (!food) {
-        // Fallback if loading=false, error=null, but food=null
         return <div className="p-8 text-center text-gray-500">Keine Daten gefunden.</div>;
     }
 
-    // Determine Energy Style safely
     const hasSpecificEnergy = (food?.foodNutrients || []).some(n => {
-        const nid = n.nutrient?.id || n.id;
+        const nid = n.nutrient?.id || n.id; // Check both nested and flat ID
         return nid === NUTRIENT_IDS.ENERGY_ATWATER_SPECIFIC;
     });
 
@@ -303,7 +318,7 @@ export const FoodDetails: React.FC = () => {
                     <div className="flex items-center space-x-4">
                         <div className="flex items-center space-x-2">
                             <Gauge className="w-4 h-4 text-blue-400" />
-                            <span>Total: **{metrics.totalTime.toFixed(2)}ms**</span>
+                            <span>Total: **{metrics.totalTime.toFixed(0)}ms**</span>
                         </div>
                         <div className="flex items-center space-x-2">
                             <Database className="w-4 h-4 text-emerald-400" />
@@ -321,23 +336,17 @@ export const FoodDetails: React.FC = () => {
                         <Utensils className="text-white w-6 h-6" />
                     </div>
                     <div>
-                        <p className="text-sm font-semibold text-gray-500">{food?.dataType || 'Unknown Type'} (ID: {food?.fdcId})</p>
+                        <p className="text-sm font-semibold text-gray-500">{food?.dataType || 'Unknown Type'} (FDC: {food?.fdcId})</p>
                         <h1 className="text-3xl font-bold text-gray-900">{food?.description || 'No Description'}</h1>
                     </div>
                 </div>
 
                 <div className="text-xs text-gray-500 mt-2">
-                    <p>FDC Category: <span className="font-semibold text-gray-700">{food?.category || 'N/A'} ({food?.category_code || '-'})</span></p>
-                    <p className="mt-1">
-                        Dies ist der vollständige FDC-Eintrag.
-                    </p>
-                    <div className="text-xs text-emerald-600">
-                        Published: {food?.publicationDate || 'Unknown'}
-                    </div>
+                    <p>Category: <span className="font-semibold text-gray-700">{food?.category || 'N/A'}</span></p>
                 </div>
             </div>
 
-            {/* Portions Card: SAFE MAPPING */}
+            {/* Portions Card */}
             {food?.portions && food.portions.length > 0 && (
                 <div className="bg-white rounded-2xl p-6 border border-gray-200 shadow-sm">
                     <h3 className="font-bold text-gray-900 mb-3 flex items-center">
@@ -354,7 +363,7 @@ export const FoodDetails: React.FC = () => {
                 </div>
             )}
 
-            {/* Macronutrient Summary (Kacheln) */}
+            {/* Macronutrient Summary */}
             <div className="grid grid-cols-4 gap-4">
                 <div className={`bg-white rounded-lg p-3 text-center border-2 ${hasSpecificEnergy ? 'border-purple-300' : 'border-gray-200'}`}>
                     <div className="text-xs text-gray-500 mb-0.5 flex items-center justify-center">

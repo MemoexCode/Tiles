@@ -1,4 +1,3 @@
-
 import { FDCFoodItem, FoodPortion, NormalizedFoodPortion, NormalizedFood } from '../types';
 import { NUTRIENT_IDS } from '../constants';
 
@@ -104,5 +103,108 @@ export const normalizeFoodItem = (food: FDCFoodItem): NormalizedFood => {
     
     // Pass through list for detailed view
     foodNutrients: food.foodNutrients || []
+  };
+};
+
+/**
+ * Normalizes the raw row returned by the 'get_tiles_food_details' RPC.
+ * Maps JSON array structures to the application's NormalizedFood format.
+ */
+export const normalizeTilesFoodDetailsRow = (row: any): NormalizedFood => {
+  // Use primary_label if available, otherwise fallback to canonical_name
+  const description = row.primary_label || row.canonical_name || 'Unknown Food';
+  
+  // Build NormalizedFoodNutrients from the JSON list
+  const rawNutrients = Array.isArray(row.nutrients) ? row.nutrients : [];
+  
+  const foodNutrients = rawNutrients.map((n: any) => ({
+    id: 0, // Not strictly needed for UI display
+    nutrientId: n.nutrientNumber ? parseInt(n.nutrientNumber) : 0,
+    nutrientNumber: n.nutrientNumber,
+    nutrientName: n.nutrientName,
+    unitName: n.unitName,
+    value: n.amount,
+    amount: n.amount,
+    nutrient: { // Populate nested object for compatibility with some helpers if needed
+       id: n.nutrientNumber ? parseInt(n.nutrientNumber) : 0,
+       number: n.nutrientNumber,
+       name: n.nutrientName,
+       rank: 0,
+       unitName: n.unitName
+    }
+  }));
+
+  // Helper to extract value from our new list by nutrientNumber (string) or ID
+  const getVal = (num: number) => {
+    // We try to find by string number first (e.g. "203")
+    // Mapping from constants (ID -> Number)
+    // 1008 -> 208 (Energy)
+    // 1003 -> 203 (Protein)
+    // 1004 -> 204 (Fat)
+    // 1005 -> 205 (Carbs)
+    // 2000 -> 269 (Sugars)
+    // 1079 -> 291 (Fiber)
+    // 1093 -> 307 (Sodium)
+    // 2047 -> 957 (Atwater General)
+    // 2048 -> 958 (Atwater Specific)
+
+    const mapIdToNumber: Record<number, string> = {
+      1008: '208',
+      1003: '203',
+      1004: '204',
+      1005: '205',
+      2000: '269',
+      1079: '291',
+      1093: '307',
+      2047: '957',
+      2048: '958'
+    };
+    
+    const targetNum = mapIdToNumber[num];
+    if (targetNum) {
+      const found = foodNutrients.find((n: any) => n.nutrientNumber === targetNum);
+      if (found) return found.amount || 0;
+    }
+    
+    // Fallback search by ID if parser worked
+    const foundById = foodNutrients.find((n: any) => n.nutrientId === num);
+    if (foundById) return foundById.amount || 0;
+
+    return 0;
+  };
+
+  const portions = (Array.isArray(row.portions) ? row.portions : []).map((p: any) => ({
+    id: p.portionId || 0,
+    amount: p.amount || 0,
+    gramWeight: p.gramWeight || 0,
+    unitDescription: p.portionDescription || p.measureUnitName || p.modifier || 'portion'
+  }));
+
+  // Energy Calculation logic similar to normalizeFoodItem
+  // We prioritize Atwater Specific (958) -> General (957) -> Standard (208)
+  let energy = getVal(NUTRIENT_IDS.ENERGY_ATWATER_SPECIFIC);
+  if (!energy) energy = getVal(NUTRIENT_IDS.ENERGY_ATWATER_GENERAL);
+  if (!energy) energy = getVal(NUTRIENT_IDS.ENERGY_KCAL);
+
+  return {
+    fdcId: row.default_fdc_id,
+    description: description,
+    dataType: row.usda_data_type || row.default_dataset || 'TilesDB',
+    publicationDate: '', // Not provided by RPC currently
+    
+    energy_kcal: energy,
+    protein_g: getVal(NUTRIENT_IDS.PROTEIN),
+    fat_g: getVal(NUTRIENT_IDS.TOTAL_LIPID_FAT),
+    carbs_g: getVal(NUTRIENT_IDS.CARBOHYDRATE_BY_DIFF),
+    sugar_g: getVal(NUTRIENT_IDS.SUGARS_TOTAL),
+    fiber_g: getVal(NUTRIENT_IDS.FIBER_TOTAL_DIETARY),
+    sodium_mg: getVal(NUTRIENT_IDS.SODIUM),
+    
+    visual_parent: row.canonical_name || generateVisualParent(description),
+    category: row.food_category || '',
+    category_code: '',
+    
+    portions: portions,
+    foodNutrients: foodNutrients
   };
 };

@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import { Search, Loader2, Info, Database, ChevronRight, Calculator, FlaskConical } from 'lucide-react';
 import { searchTilesFood } from '../services/tilesFoodSearchService';
@@ -46,16 +45,8 @@ export const FoodSearch: React.FC = () => {
     setHasSearched(true);
     
     try {
-      // Switch to new Tiles Search Service
-      // Hardcoded to 'en' for now based on typical USDA data content matching, 
-      // or 'de' if the DB contains German labels. 
-      // The prompt suggests using the service default (which is 'de' or params).
-      // Let's use 'en' as default here since USDA data is English, but 
-      // if the RPC expects 'de' for localization, it handles it internally.
-      // We'll pass 'en' to align with the FDC dataset context usually, 
-      // but if the app is german-focused (implied by previous comments), 'de' works.
-      // We stick to the service default or explicit parameter.
-      const results = await searchTilesFood({ query: searchTerm, langCode: 'en' });
+      // Use 'de' to ensure we get German labels if available, aligning with the new default RPC behavior.
+      const results = await searchTilesFood({ query: searchTerm, langCode: 'de' });
       
       setCachedResults(results);
       
@@ -106,7 +97,7 @@ export const FoodSearch: React.FC = () => {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Search e.g., 'Avocado', 'Spinach'..."
+            placeholder="Search e.g., 'Apfel', 'Banane'..."
             className="w-full pl-12 pr-4 py-4 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white transition-all text-lg"
           />
           <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 text-gray-400 w-6 h-6" />
@@ -173,15 +164,21 @@ export const FoodSearch: React.FC = () => {
                 {item.defaultDataset || 'USDA'}
               </span>
               
-              {item.defaultFdcId ? (
+              {/* Prioritize linking via UUID (foodId). Pass fallback info via state. */}
+              {item.foodId ? (
                 <Link 
-                  to={`/food/${item.defaultFdcId}`} 
+                  to={`/food/${item.foodId}`}
+                  state={{ 
+                    fallbackFdcId: item.defaultFdcId, 
+                    fallbackDataset: item.defaultDataset, 
+                    fallbackLabel: item.primaryLabel 
+                  }}
                   className="text-sm font-medium text-emerald-600 flex items-center hover:text-emerald-700"
                 >
                   View Details <ChevronRight className="w-4 h-4 ml-1" />
                 </Link>
               ) : (
-                 <span className="text-sm text-gray-400 cursor-not-allowed">No Details</span>
+                 <span className="text-sm text-gray-400 cursor-not-allowed">No ID</span>
               )}
             </div>
           </div>
